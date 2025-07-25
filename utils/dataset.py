@@ -105,6 +105,25 @@ class Dataset(object):
         else:
             raise FileNotFoundError()
 
+    def gen_data(self):
+        '''
+        Activity: Transform to graph
+        Event Attributes: Transform to sequence
+        '''
+
+        # Graph Generation
+        for case_idx in range(self.num_cases):
+            if self.case_lens[case_idx]>1:          # 길이 1 이상인 경우에만
+                pass
+
+        # Activity만 directly follows graph로
+
+        # Event Attributes는 Sequence로
+
+        # num_activities < num_events --> activity가 어떤 event에 속하는지 인덱싱필요
+
+        # Activity 제외 나머지는 Sequence로
+        
 
     def _gen_trace_graphs(self):
 

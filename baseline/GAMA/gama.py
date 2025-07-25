@@ -70,11 +70,8 @@ class GAMA():
                 optimizer.zero_grad()
 
                 loss = 0.0
-                mask[:, 0] = True  # 除了每一个属性的起始字符之外,其他重建误差
+                mask[:, 0] = True  # 각 속성의 시작 문자를 제외한 나머지 재구성 오류
                 for i in range(len(dataset.attribute_dims)):
-                    # --------------
-                    # 除了每一个属性的起始字符之外,其他重建误差
-                    # ---------------
                     pred = attr_reconstruction_outputs[i][~mask]
                     true = Xs_list[i][~mask]
                     loss += loss_func(pred, true)
@@ -83,7 +80,7 @@ class GAMA():
                 train_num += 1
                 loss.backward()
                 optimizer.step()
-            ## 计算一个epoch在训练集上的损失和精度
+            # 한 epoch 동안의 훈련 데이터셋에서의 손실과 정확도를 계산
             train_loss_epoch = train_loss / train_num
             print(f"[Epoch {epoch + 1:{len(str(self.n_epochs))}}/{self.n_epochs}] "
                   f"[loss: {train_loss_epoch:3f}]")

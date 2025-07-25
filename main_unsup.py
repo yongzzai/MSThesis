@@ -145,8 +145,6 @@ if __name__ == '__main__':
     print('number of datasets:' + str(len(dataset_names)))
     for ad in ads:
         for d in dataset_names:
-            p = Process(target=fit_and_eva, kwargs={ 'dataset_name' : d,  **ad })
-            p.start()
-            p.join()
+            fit_and_eva(d, **ad)
 
     # res = [fit_and_eva(d, **ad) for ad in ads for d in dataset_names]

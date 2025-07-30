@@ -91,17 +91,17 @@ class Dataset(object):
         # Check for cache
         if el_file.cache_file.exists():
             self._load_dataset_from_cache(el_file.cache_file)
-            self._gen_trace_graphs()
-            self._gen_trace_graphs_GAE()
-
+            self.gen_data()
+            # self._gen_trace_graphs()
+            # self._gen_trace_graphs_GAE()
 
         # Else generator from event log
         elif el_file.path.exists():
             self._event_log = EventLog.load(el_file.path)
             self.from_event_log(self._event_log)
             self._cache_dataset(el_file.cache_file)
-            self._gen_trace_graphs()
-            self._gen_trace_graphs_GAE()
+            # self._gen_trace_graphs()
+            # self._gen_trace_graphs_GAE()
         else:
             raise FileNotFoundError()
 
@@ -111,11 +111,54 @@ class Dataset(object):
         Event Attributes: Transform to sequence
         '''
 
+        self.DataChunks = []
+
         # Graph Generation
         for case_idx in range(self.num_cases):
-            if self.case_lens[case_idx]>1:          # 길이 1 이상인 경우에만
-                pass
+            if self.case_lens[case_idx]>1:
 
+                event_attrs = torch.tensor([], dtype=torch.long)
+                edge_index = torch.tensor([], dtype=torch.long)
+
+                for attr_idx in range(self.num_attributes):
+                    if attr_idx == 0:       # Activity
+
+                        act_trace = self.features[attr_idx][case_idx]     # type-> np.array
+                        event_attrs = torch.cat((event_attrs, torch.tensor(act_trace).reshape(1,-1)), dim=0)
+
+                        activity_seq = act_trace[act_trace != 0]
+                        unique_acts = np.array(list(dict.fromkeys(activity_seq))) # preserve order of activities
+
+                        x = unique_acts.reshape(-1, 1)
+
+                        for activity_idx in range(1, self.case_lens[case_idx]):    # case_len: [5, 6, 4, ...]
+                            src = act_trace[activity_idx - 1]
+                            dst = act_trace[activity_idx]
+
+                            # Activity Index of src and dst activity
+                            src_idx = np.where(unique_acts == src)[0][0]
+                            dst_idx = np.where(unique_acts == dst)[0][0]
+
+                            edge_index = torch.cat((edge_index, torch.tensor([[src_idx, dst_idx]], dtype=torch.long)), dim=0)
+
+                            # breakpoint()
+                    
+                    else:
+
+                        attr_trace = self.features[attr_idx][case_idx]  # type-> np.array
+                        event_attrs = torch.cat((event_attrs, torch.tensor(attr_trace).reshape(1,-1)), dim=0)
+
+                x = torch.tensor(x, dtype=torch.float)
+                edge_index = edge_index.T   # shape(2, num_edges)
+
+                data = Data(x=x, edge_index=edge_index, event_attrs=event_attrs)
+                # breakpoint()
+                self.DataChunks.append(data)
+
+                    
+
+
+    
         # Activity만 directly follows graph로
 
         # Event Attributes는 Sequence로

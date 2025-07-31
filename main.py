@@ -47,10 +47,14 @@ if __name__ == '__main__':
     
     print(dataset_names[0])
     dataset = Dataset(dataset_names[0])
-    print(len(dataset.features))
 
     print(dataset.features[0].shape)
-    print(dataset.features[1].shape)
-    print(dataset.features[2].shape)
+    print(dataset.binary_targets.shape)
+    print(dataset.binary_targets.flatten().shape)
+    print("-----------------------------")
+    print(dataset.DataChunks[0].x)
+    print(dataset.DataChunks[0].x.shape)
+    print(dataset.DataChunks[0].event_seq)
+    print(dataset.DataChunks[0].event_seq.shape)
 
     # res = [fit_and_eva(d, **ad) for ad in ads for d in dataset_names]

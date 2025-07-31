@@ -63,41 +63,6 @@ class GAT_Encoder(nn.Module):
         return x
 
 
-# class Attention(nn.Module):
-#     '''
-#     加性注意力
-#     '''
-#     def __init__(self, enc_hid_dim, dec_hid_dim):
-#         super().__init__()
-#
-#         self.attn = nn.Linear(enc_hid_dim + dec_hid_dim, dec_hid_dim, bias=False)  # 输出的维度是任意的
-#         self.v = nn.Linear(dec_hid_dim, 1, bias=False)  # 将输出维度置为1
-#
-#     def forward(self, s, enc_output):
-#         # s = [batch_size, dec_hidden_dim]
-#         # enc_output = [seq_len, batch_size, enc_hid_dim * 2]
-#
-#         seq_len = enc_output.shape[0]
-#
-#         # repeat decoder hidden state seq_len times
-#         # s = [seq_len, batch_size, dec_hid_dim]
-#         s = s.repeat(seq_len, 1,1)  # [batch_size, dec_hid_dim]=>[seq_len, batch_size, dec_hid_dim]
-#
-#         energy = torch.tanh(self.attn(torch.cat((s, enc_output), dim=2)))
-#
-#         attention = self.v(energy).squeeze(
-#             2)  # [seq_len, batch_size, dec_hid_dim]=>[seq_len，batch_size, 1] => [seq_len, batch_size]
-#
-#         attention_probs=F.softmax(attention, dim=0).transpose(0, 1).unsqueeze(1)  # [batch_size, 1 , seq_len]
-#
-#         enc_output = enc_output.transpose(0, 1)
-#
-#         # # c = [1, batch_size, enc_hid_dim * 2]
-#         c = torch.bmm(attention_probs, enc_output).transpose(0, 1)
-#
-#         return c,attention_probs
-
-
 class Attention(nn.Module):
     '''
     点积注意力

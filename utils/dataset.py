@@ -69,7 +69,6 @@ class Dataset(object):
         self._features = None
         self._event_log = None
 
-
         # Load dataset
         if self.dataset_name is not None:
             self.load(self.dataset_name)
@@ -91,17 +90,21 @@ class Dataset(object):
         # Check for cache
         if el_file.cache_file.exists():
             self._load_dataset_from_cache(el_file.cache_file)
+            self._gen_trace_graphs()
+            self._gen_trace_graphs_GAE()
+
             self.gen_data()
-            # self._gen_trace_graphs()
-            # self._gen_trace_graphs_GAE()
 
         # Else generator from event log
         elif el_file.path.exists():
             self._event_log = EventLog.load(el_file.path)
             self.from_event_log(self._event_log)
             self._cache_dataset(el_file.cache_file)
-            # self._gen_trace_graphs()
-            # self._gen_trace_graphs_GAE()
+            self._gen_trace_graphs()
+            self._gen_trace_graphs_GAE()
+
+            self.gen_data()
+
         else:
             raise FileNotFoundError()
 
@@ -131,6 +134,12 @@ class Dataset(object):
 
                         x = unique_acts.reshape(-1, 1)
 
+                        position = {}          # for positional encoding and embedding mapping
+                        for i, act in enumerate(activity_seq):
+                            if act not in position:
+                                position[act] = []
+                            position[act].append(i)
+
                         for activity_idx in range(1, self.case_lens[case_idx]):    # case_len: [5, 6, 4, ...]
                             src = act_trace[activity_idx - 1]
                             dst = act_trace[activity_idx]
@@ -140,33 +149,16 @@ class Dataset(object):
                             dst_idx = np.where(unique_acts == dst)[0][0]
 
                             edge_index = torch.cat((edge_index, torch.tensor([[src_idx, dst_idx]], dtype=torch.long)), dim=0)
-
-                            # breakpoint()
                     
                     else:
-
                         attr_trace = self.features[attr_idx][case_idx]  # type-> np.array
                         event_attrs = torch.cat((event_attrs, torch.tensor(attr_trace).reshape(1,-1)), dim=0)
 
                 x = torch.tensor(x, dtype=torch.float)
                 edge_index = edge_index.T   # shape(2, num_edges)
 
-                data = Data(x=x, edge_index=edge_index, event_attrs=event_attrs)
-                # breakpoint()
+                data = Data(x=x, edge_index=edge_index, event_seq=event_attrs, idx_pos=position)
                 self.DataChunks.append(data)
-
-                    
-
-
-    
-        # Activity만 directly follows graph로
-
-        # Event Attributes는 Sequence로
-
-        # num_activities < num_events --> activity가 어떤 event에 속하는지 인덱싱필요
-
-        # Activity 제외 나머지는 Sequence로
-        
 
     def _gen_trace_graphs(self):
 

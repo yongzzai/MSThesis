@@ -73,8 +73,8 @@ class Dataset(object):
         if self.dataset_name is not None:
             self.load(self.dataset_name)
 
-        self.labeled_indices = np.random.choice(self.anomaly_indices, size=max(int(
-            len(self.anomaly_indices) * self.label_percent),1), replace=False)  ### Used by weakly supervised methods to indicate indices of labeled anomalies during training
+        #self.labeled_indices = np.random.choice(self.anomaly_indices, size=max(int(
+        #    len(self.anomaly_indices) * self.label_percent),1), replace=False)  ### Used by weakly supervised methods to indicate indices of labeled anomalies during training
 
     def load(self, dataset_name):
         """
@@ -127,18 +127,23 @@ class Dataset(object):
                     if attr_idx == 0:       # Activity
 
                         act_trace = self.features[attr_idx][case_idx]     # type-> np.array
-                        event_attrs = torch.cat((event_attrs, torch.tensor(act_trace).reshape(1,-1)), dim=0)
+                        act_origin = torch.tensor(act_trace, dtype=torch.long)
 
                         activity_seq = act_trace[act_trace != 0]
                         unique_acts = np.array(list(dict.fromkeys(activity_seq))) # preserve order of activities
 
                         x = unique_acts.reshape(-1, 1)
 
-                        position = {}          # for positional encoding and embedding mapping
-                        for i, act in enumerate(activity_seq):
-                            if act not in position:
-                                position[act] = []
-                            position[act].append(i)
+                        # 전체 시퀀스에 대해 position 생성 (패딩 부분은 -1)
+                        position = []
+                        for i in range(len(act_trace)):  # 전체 시퀀스 길이만큼 반복
+                            if act_trace[i] != 0:  # 패딩이 아닌 실제 활동
+                                node_idx = np.where(unique_acts == act_trace[i])[0][0]
+                                position.append(node_idx)
+                            else:  # 패딩된 부분
+                                position.append(-1)
+                        
+                        position = torch.tensor(position, dtype=torch.long)
 
                         for activity_idx in range(1, self.case_lens[case_idx]):    # case_len: [5, 6, 4, ...]
                             src = act_trace[activity_idx - 1]
@@ -149,15 +154,19 @@ class Dataset(object):
                             dst_idx = np.where(unique_acts == dst)[0][0]
 
                             edge_index = torch.cat((edge_index, torch.tensor([[src_idx, dst_idx]], dtype=torch.long)), dim=0)
-                    
+                
                     else:
                         attr_trace = self.features[attr_idx][case_idx]  # type-> np.array
-                        event_attrs = torch.cat((event_attrs, torch.tensor(attr_trace).reshape(1,-1)), dim=0)
+                        event_attrs = torch.cat((event_attrs, torch.tensor(attr_trace).reshape(1,-1)), dim=0)   # Shape(Attr_num, Seq_len)
 
-                x = torch.tensor(x, dtype=torch.float)
+                x = torch.tensor(x, dtype=torch.long)
                 edge_index = edge_index.T   # shape(2, num_edges)
 
-                data = Data(x=x, edge_index=edge_index, event_seq=event_attrs, idx_pos=position)
+                # Shape (Attr_num, Seq_len) --> (1, Seq_len, Attr_num)
+                event_attrs = event_attrs.permute(1,0).unsqueeze(0)
+
+                data = Data(x=x, edge_index=edge_index, seq=event_attrs, 
+                            act_pos=position, act_origin=act_origin)
                 self.DataChunks.append(data)
 
     def _gen_trace_graphs(self):

@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
 
-from .layers import GraphEncoder, EventSeqEncoder, FeatureMixer
+from .layers import GraphEncoder, EventSeqEncoder, FeatureMixer, Network
 from utils.dataset import Dataset
 
 class GAIN(nn.Module):
@@ -23,12 +23,10 @@ class GAIN(nn.Module):
         self.lr = lr 
 
     def train(self, datachunk):
-        self.graph_encoder = GraphEncoder(attr_dims=self.attribute_dims,
-                                          hidden_dim=self.hidden_dim)
-        self.event_encoder = EventSeqEncoder(attr_dims=self.attribute_dims,
-                                             hidden_dim=self.hidden_dim,
-                                             num_layers=self.num_gru_layer)
-        self.feature_mixer = FeatureMixer(hidden_dim=self.hidden_dim)
+
+        self.net = Network(attr_dims=self.attribute_dims,
+                           hidden_dim=self.hidden_dim,
+                           num_layers=self.num_gru_layer)
 
         loader = DataLoader(
             dataset=datachunk,
@@ -38,23 +36,23 @@ class GAIN(nn.Module):
         )
 
         optimizer = torch.optim.AdamW(
-            list(self.graph_encoder.parameters()) +
-            list(self.event_encoder.parameters()) +
-            list(self.feature_mixer.parameters()),
-            lr=self.lr, weight_decay=1e-5
-        )
+            list(self.net.parameters()),
+            lr=self.lr, weight_decay=1e-5)
 
         for epoch in range(self.epochs):
             for idx, batch in enumerate(loader):
 
                 optimizer.zero_grad()
-                Xg, edge_index = batch.x, batch.edge_index 
-                Xs, Apos, Aorigin = batch.seq, batch.act_pos, batch.act_origin 
-                batch_g, batch_s = batch.x_batch, batch.seq_batch
 
-                Hg, Zg = self.graph_encoder(Xg, edge_index, batch_g)
-                Zs, Hf, Hb = self.event_encoder(Xs)
+                s0, s = self.net.forward(data=batch)
                 
+                if idx == 100:
+                    print(s0)
+                    print(s0.shape)
+                    print(s)
+                    print(s.shape)
+                    
+
                 #TODO: 여기까진 잘 돌아가는거 확인함.
 
     def fit(self, dataset):

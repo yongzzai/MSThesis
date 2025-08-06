@@ -129,6 +129,8 @@ class Dataset(object):
                         act_trace = self.features[attr_idx][case_idx]     # type-> np.array
                         act_origin = torch.tensor(act_trace, dtype=torch.long)
 
+                        act_origin = act_origin.reshape(1, -1)  # Shape(1, Seq_len)
+
                         activity_seq = act_trace[act_trace != 0]
                         unique_acts = np.array(list(dict.fromkeys(activity_seq))) # preserve order of activities
 
@@ -144,6 +146,7 @@ class Dataset(object):
                                 position.append(-1)
                         
                         position = torch.tensor(position, dtype=torch.long)
+                        position = position.reshape(1, -1)  # Shape(1, Seq_len)
 
                         for activity_idx in range(1, self.case_lens[case_idx]):    # case_len: [5, 6, 4, ...]
                             src = act_trace[activity_idx - 1]

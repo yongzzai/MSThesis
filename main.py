@@ -65,7 +65,7 @@ if __name__ == '__main__':
     first_batch = next(iter(loader))
     print("x shape:", first_batch.x.shape)
     print("seq shape:", first_batch.seq.shape)
-    print("batch_idx shape:",  torch.unique(first_batch.x_batch))
+    print("batch_idx unique:",  torch.unique(first_batch.x_batch))
     print("seq batch shape:", first_batch.seq_batch)
     print("act_pos shape:", first_batch.act_pos.shape)
     print("act_origin shape:", first_batch.act_origin.shape)

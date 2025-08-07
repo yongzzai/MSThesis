@@ -48,30 +48,8 @@ if __name__ == '__main__':
     print(dataset_names[0])
     dataset = Dataset(dataset_names[0])
 
-    print('====')
-    print(dataset.DataChunks[0].act_pos)
-    print(dataset.DataChunks[0].act_origin)
-    print("----")
-    from torch_geometric.loader import DataLoader
-    import torch
-
-    loader = DataLoader(
-        dataset=dataset.DataChunks,
-        batch_size=5,
-        shuffle=True,
-        follow_batch=['x', 'seq']
-    )
-
-    first_batch = next(iter(loader))
-    print("x shape:", first_batch.x.shape)
-    print("seq shape:", first_batch.seq.shape)
-    print("batch_idx unique:",  torch.unique(first_batch.x_batch))
-    print("seq batch shape:", first_batch.seq_batch)
-    print("act_pos shape:", first_batch.act_pos.shape)
-    print("act_origin shape:", first_batch.act_origin.shape)
-
     from model.model import GAIN
 
-    gain = GAIN(hidden_dim=64, num_gru_layer=2, batch_size=5, epochs=10, lr=0.001, seed=42)
+    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2, batch_size=64, epochs=10, lr=0.001, seed=42)
 
     gain.fit(dataset)

@@ -4,7 +4,7 @@
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATConv, global_mean_pool
+from torch_geometric.nn import GATConv, global_mean_pool, PositionalEncoding
 
 class GraphEncoder(nn.Module):
     def __init__(self, attr_dims:list, hidden_dim:int):
@@ -25,8 +25,8 @@ class GraphEncoder(nn.Module):
         self.projection = nn.Linear(hidden_dim * 2, hidden_dim)     # Shape(A, H)
 
     def forward(self, x, edge_index, batch_idx):
-        x = self.acts_embedding(x).squeeze(1)  # Shape(A, H)
-        h = self.conv1(x, edge_index)
+        x_emb = self.acts_embedding(x).squeeze(1)  # Shape(A, H)
+        h = self.conv1(x_emb, edge_index)
         h = self.act1(h)
         h = self.do1(h)
 
@@ -65,9 +65,9 @@ class EventSeqEncoder(nn.Module):
         return out, fwd, bwd
 
 
-class FeatureMixer(nn.Module):
+class Mixer(nn.Module):
     def __init__(self, hidden_dim):
-        super(FeatureMixer, self).__init__()
+        super(Mixer, self).__init__()
 
         self.context_mixer = nn.Sequential(
             nn.LayerNorm(hidden_dim*3),
@@ -75,49 +75,62 @@ class FeatureMixer(nn.Module):
             nn.LeakyReLU(), nn.Dropout(p=0.3))
 
         self.vector_mixer = nn.Sequential(
-            nn.LayerNorm(hidden_dim*3),
-            nn.Linear(hidden_dim*3, hidden_dim*2),
+            nn.LayerNorm(hidden_dim*4),
+            nn.Linear(hidden_dim*4, hidden_dim*2),
             nn.LeakyReLU(), nn.Dropout(p=0.3))
 
     def forward(self, h, z):
-        s0 = self.context_mixer(z)  # Shape(batch_size, H*3)
-        s = self.vector_mixer(h)    # Shape(batch_size, seq_len, H*2)
-        return s0, s
+        context = self.context_mixer(z)  # Shape(batch_size, H*3)
+        rep = self.vector_mixer(h)    # Shape(batch_size, seq_len, H*2)
+        rep = rep[:, :-1, :]  # Shape(batch_size, seq_len-1, H*2)
+        return context, rep
 
 
-class Decoder(nn.Module):
-    def __init__(self, attr_dims:list, hidden_dim:int, num_dec_layers:int):
-        super(Decoder, self).__init__()
+class DecoderBlock(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_dec_layers):
+        super(DecoderBlock, self).__init__()
 
-        self.gru = nn.ModuleList([
-            nn.GRU(input_size=hidden_dim*3,
-                   hidden_size=hidden_dim,
-                   num_layers=num_dec_layers,
-                   dropout=0.3, batch_first=True) for _ in range(len(attr_dims))])
-        
-        self.projection = nn.ModuleList([
-            nn.Linear(hidden_dim, attr_dims[i]+1) for i in range(len(attr_dims))
-        ])
-    
-    def forward(self):
-        pass
+        self.gru = nn.GRU(input_size=hidden_dim*3,
+                          hidden_size=hidden_dim,
+                          num_layers=num_dec_layers, 
+                          dropout=0.3, batch_first=True)
+        self.lin = nn.Linear(hidden_dim, input_dim)
 
-from torch_geometric.nn import PositionalEncoding
+    def forward(self, seq):
+
+        self.gru.flatten_parameters()
+        out, _ = self.gru(seq)
+        return self.lin(out)  # Shape(batch_size, seq_len, input_dim)
+
 
 class Network(nn.Module):
-    def __init__(self, attr_dims:list, hidden_dim:int, num_layers:int):
+
+    def __init__(self, attr_dims:list, hidden_dim:int, num_enc_layers:int, num_dec_layers:int):
         super(Network, self).__init__()
 
         self.GraphEnc = GraphEncoder(attr_dims, hidden_dim)
-        self.EventSeqEnc = EventSeqEncoder(attr_dims, hidden_dim, num_layers)
-        self.FeatureMixer = FeatureMixer(hidden_dim)
+        self.EventSeqEnc = EventSeqEncoder(attr_dims, hidden_dim, num_enc_layers)
         self.PosEnc = PositionalEncoding(hidden_dim)
+        self.Mixer = Mixer(hidden_dim)
+
+        # for Teacher Forcing
+        self.Embedder = nn.ModuleList([
+            nn.Embedding(dim+1, hidden_dim) for dim in attr_dims
+        ])
+
+        self.Decoder = nn.ModuleList([
+            DecoderBlock(input_dim=int(dim+1), hidden_dim=hidden_dim,
+                         num_dec_layers=num_dec_layers) for dim in attr_dims])
+        
+        # Decoder[0]: Activity reconstruction
+        # Decoder[i]: Reconstruction of i-th attr
 
     def forward(self, data):
 
         Xg, edge_index = data.x, data.edge_index 
         Xs, Act_pos = data.seq, data.act_pos 
-        batch_g, batch_s = data.x_batch, data.seq_batch
+        batch_g = data.x_batch
+        Xa = data.act_origin  # Shape(batch_size, Seq_len)
 
         out_g, z_g = self.GraphEnc(Xg, edge_index, batch_g)         # Shape(num_nodes, H), Shape(batch_size, H)
         out_s, h_fwd, h_bwd = self.EventSeqEnc(Xs)      # Shape(batch_size, seq_len, H*2), Shape(batch_size, H), Shape(batch_size, H)
@@ -140,21 +153,35 @@ class Network(nn.Module):
         h = torch.cat([out_s, mapped_g], dim=2)  # Shape(batch_size, seq_len, H*3)
 
         # positional encoding
-        temp = torch.arange(seq_len, device=out_s.device).unsqueeze(0).expand(batch_size, -1)  # Shape(batch_size, seq_len)
-        pos = self.PosEnc(temp) # Shape(batch_size, seq_len, hidden_dim)
+        temp = torch.arange(seq_len, device=out_s.device).reshape(-1, 1) # Shape(seq_len, 1)
+        pos = self.PosEnc(temp) # Shape(seq_len, hidden_dim)
+        pos = pos.unsqueeze(0).expand(batch_size, -1, -1)   # Shape(batch_size, seq_len, hidden_dim)
 
         # exclude the pe at padding position
         pos = pos * valid_mask.unsqueeze(2).float()  # Shape(batch_size, seq_len, hidden_dim)
 
-        h = torch.cat([h, pos], dim=2)
+        h = torch.cat([h, pos], dim=2)  # Shape(batch_size, seq_len, H*4)
 
-        s0, s = self.FeatureMixer(h, z) 
-        # Shape(batch_size, H*3), Shape(batch_size, seq_len, H*3)
+        context, dec_input = self.Mixer(h, z)
+        # context: Shape(batch_size, H*3)
+        # dec_input: Shape(batch_size, seq_len-1, H*2)
 
-        return s0, s
+        for i, dec in enumerate(self.Decoder):
 
-        #TODO: Positional Encoding 수정
+            if i < 1:
+                Xa_emb = self.Embedder[0](Xa)[:, :-1, :] # Shape(batch_size, seq_len-1, hidden_dim)
+                input0 = torch.cat([dec_input, Xa_emb], dim=2)          # Shape(batch_size, seq_len-1, H*3)                
+                gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)  # Shape(batch_size, seq_len, H*3)
+                dec_output = dec(gru_input) # Shape(batch_size, seq_len, input_dim)
 
-        #TODO: Decoder 구현 필요
-        #TODO: s는 encoder 초기의 embedding을 가져와서 concat해야함 (Teacher Forcing)
-        #TODO: s0는 decoder gru의 첫번째 cell input으로 사용함.
+                print(dec_output.shape)
+
+            else:
+                attr_emb = self.Embedder[i](Xs[:, :, i-1])[:, :-1, :]  # Shape(batch_size, seq_len-1, hidden_dim)
+                input0 = torch.cat([dec_input, attr_emb], dim=2)          # Shape(batch_size, seq_len-1, H*3)
+                gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)    # Shape(batch_size, seq_len, H*3)
+                dec_output = dec(gru_input)
+
+                print(dec_output.shape)
+
+        return input0, dec_input

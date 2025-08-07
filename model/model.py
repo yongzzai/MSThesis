@@ -7,17 +7,19 @@ import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
 
-from .layers import GraphEncoder, EventSeqEncoder, FeatureMixer, Network
+from .layers import Network
 from utils.dataset import Dataset
 
 class GAIN(nn.Module):
-    def __init__(self, hidden_dim:int, num_gru_layer:int, batch_size:int, epochs:int, 
+    def __init__(self, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, batch_size:int, epochs:int, 
                  lr:float, seed:int):
         super(GAIN, self).__init__()
 
         torch.manual_seed(seed)
+        
         self.hidden_dim = hidden_dim
-        self.num_gru_layer = num_gru_layer
+        self.num_enc_layers = num_enc_layers
+        self.num_dec_layers = num_dec_layers
         self.batch_size = batch_size
         self.epochs = epochs
         self.lr = lr 
@@ -26,7 +28,8 @@ class GAIN(nn.Module):
 
         self.net = Network(attr_dims=self.attribute_dims,
                            hidden_dim=self.hidden_dim,
-                           num_layers=self.num_gru_layer)
+                           num_enc_layers=self.num_enc_layers,
+                           num_dec_layers=self.num_dec_layers)
 
         loader = DataLoader(
             dataset=datachunk,
@@ -39,19 +42,15 @@ class GAIN(nn.Module):
             list(self.net.parameters()),
             lr=self.lr, weight_decay=1e-5)
 
+        print("=========================")
+        print(self.attribute_dims)
         for epoch in range(self.epochs):
             for idx, batch in enumerate(loader):
 
                 optimizer.zero_grad()
 
-                s0, s = self.net.forward(data=batch)
-                
-                if idx == 100:
-                    print(s0)
-                    print(s0.shape)
-                    print(s)
-                    print(s.shape)
-                    
+                s0, s = self.net(data=batch)
+                                    
 
                 #TODO: 여기까진 잘 돌아가는거 확인함.
 

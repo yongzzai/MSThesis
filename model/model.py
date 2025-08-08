@@ -8,56 +8,112 @@ import torch.nn as nn
 from torch_geometric.loader import DataLoader
 
 from .layers import Network
-from utils.dataset import Dataset
+from tqdm import tqdm
+
 
 class GAIN(nn.Module):
-    def __init__(self, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, batch_size:int, epochs:int, 
-                 lr:float, seed:int):
+    def __init__(self, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, 
+                 batch_size:int, epochs:int, lr:float, seed:int):
         super(GAIN, self).__init__()
 
-        torch.manual_seed(seed)
+        torch.manual_seed(int(seed))
         
         self.hidden_dim = hidden_dim
         self.num_enc_layers = num_enc_layers
         self.num_dec_layers = num_dec_layers
         self.batch_size = batch_size
         self.epochs = epochs
-        self.lr = lr 
+        self.lr = lr
 
-    def train(self, datachunk):
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        self.net = Network(attr_dims=self.attribute_dims,
+
+    def fit(self, dataset):
+
+        self.net = Network(attr_dims=dataset.attribute_dims,
                            hidden_dim=self.hidden_dim,
                            num_enc_layers=self.num_enc_layers,
                            num_dec_layers=self.num_dec_layers)
-
+        
+        self.net = self.net.to(self.device)
+        
         loader = DataLoader(
-            dataset=datachunk,
-            batch_size=self.batch_size,
-            shuffle=True,
-            follow_batch=['x','seq']
-        )
-
+            dataset=dataset.DataChunks, batch_size=self.batch_size,
+            shuffle=True, follow_batch=['x','seq'])
+        
         optimizer = torch.optim.AdamW(
-            list(self.net.parameters()),
+            self.net.parameters(),
             lr=self.lr, weight_decay=1e-5)
+        
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer=optimizer,
+            T_max=len(loader), eta_min=0.)
+        
+        criterion = nn.CrossEntropyLoss(reduction='none')
 
-        print("=========================")
-        print(self.attribute_dims)
         for epoch in range(self.epochs):
-            for idx, batch in enumerate(loader):
+
+            self.net.train()
+            epoch_loss = 0.0
+            
+            for batch in tqdm(loader, desc="Epoch {}".format(epoch+1)):
 
                 optimizer.zero_grad()
 
-                s0, s = self.net(data=batch)
-                                    
+                batch = batch.to(self.device)
 
-                #TODO: 여기까진 잘 돌아가는거 확인함.
+                Xg, Xs, Xa = batch.x, batch.seq, batch.act_origin
+                edge_index = batch.edge_index
+                Act_pos = batch.act_pos
+                batch_g = batch.x_batch
+                
+                logits = self.net(Xg=Xg, Xs=Xs, Xa=Xa,
+                    edge_index=edge_index, Act_pos=Act_pos, batch_g=batch_g)
 
-    def fit(self, dataset):
+                TrueSeq = torch.cat([Xa.unsqueeze(2), Xs], dim=2)   # Shape(batch_size, seq_len, num_attr)
+
+                loss = 0.0
+                for idx in range(len(logits)):
+                    true = TrueSeq[:, :, idx]               # Shape(batch_size, seq_len)
+                    pred = logits[idx].permute(0,2,1)       # Shape(batch_size, num_classes, seq_len)
+
+                    mask = true > 0     # Shape(batch_size, seq_len)
+                    mask[:, 0] = False  # Remove start token
+                    loss_batch = criterion(pred, true) * mask.float()   # Shape(batch_size, seq_len)
+                    loss_batch = loss_batch.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
+                    loss += loss_batch.mean()
+
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item() / len(dataset.attribute_dims)
         
-        self.attribute_dims = dataset.attribute_dims
+            scheduler.step()
+            print("Epoch {} - Loss = {:.4f}".format(epoch+1, epoch_loss/len(loader)))
 
-        self.train(datachunk=dataset.DataChunks)
 
+    def detect(self, dataset):
+
+        for param in self.net.parameters():
+            param.requires_grad = False
+
+        loader = DataLoader(
+            dataset=dataset.DataChunks, batch_size=self.batch_size,
+            shuffle=False, follow_batch=['x','seq'])
+        
+        with torch.no_grad():
+            for batch in loader:
+                self.net.eval()
+                batch = batch.to(self.device)
+
+                Xg, Xs, Xa = batch.x, batch.seq, batch.act_origin
+                edge_index = batch.edge_index
+                Act_pos = batch.act_pos
+                batch_g = batch.x_batch
+
+                logits = self.net(Xg=Xg, Xs=Xs, Xa=Xa,
+                    edge_index=edge_index, Act_pos=Act_pos, batch_g=batch_g)
+                
+                for idx in range(len(logits)):
+
+                    pred = torch.nn.functional.softmax(logits[idx], dim=2)      # Shape(batch_size, seq_len, num_classes)
 

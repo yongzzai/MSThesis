@@ -48,8 +48,19 @@ if __name__ == '__main__':
     print(dataset_names[0])
     dataset = Dataset(dataset_names[0])
 
+    eventTemp = dataset.binary_targets.sum(2).flatten()
+    eventTemp[eventTemp > 1] = 1
+    
+    print("Label Shape")
+    print("Trace-level", dataset.case_target.shape)
+    print("Event-level", eventTemp.shape)
+    print("Attr-level original", dataset.binary_targets.shape)
+    print("Attr-level", dataset.binary_targets.flatten().shape)
+
     from model.model import GAIN
 
-    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2, batch_size=64, epochs=10, lr=0.001, seed=42)
+    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2, batch_size=64, epochs=3, lr=0.001, seed=42)
 
     gain.fit(dataset)
+
+    gain.detect(dataset)

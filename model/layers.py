@@ -113,7 +113,6 @@ class Network(nn.Module):
         self.PosEnc = PositionalEncoding(hidden_dim)
         self.Mixer = Mixer(hidden_dim)
 
-        # for Teacher Forcing
         self.Embedder = nn.ModuleList([
             nn.Embedding(dim+1, hidden_dim) for dim in attr_dims
         ])
@@ -122,15 +121,7 @@ class Network(nn.Module):
             DecoderBlock(input_dim=int(dim+1), hidden_dim=hidden_dim,
                          num_dec_layers=num_dec_layers) for dim in attr_dims])
         
-        # Decoder[0]: Activity reconstruction
-        # Decoder[i]: Reconstruction of i-th attr
-
-    def forward(self, data):
-
-        Xg, edge_index = data.x, data.edge_index 
-        Xs, Act_pos = data.seq, data.act_pos 
-        batch_g = data.x_batch
-        Xa = data.act_origin  # Shape(batch_size, Seq_len)
+    def forward(self, Xg, Xs, Xa, edge_index, Act_pos, batch_g):
 
         out_g, z_g = self.GraphEnc(Xg, edge_index, batch_g)         # Shape(num_nodes, H), Shape(batch_size, H)
         out_s, h_fwd, h_bwd = self.EventSeqEnc(Xs)      # Shape(batch_size, seq_len, H*2), Shape(batch_size, H), Shape(batch_size, H)
@@ -166,22 +157,22 @@ class Network(nn.Module):
         # context: Shape(batch_size, H*3)
         # dec_input: Shape(batch_size, seq_len-1, H*2)
 
+        output = [] 
+
         for i, dec in enumerate(self.Decoder):
 
             if i < 1:
-                Xa_emb = self.Embedder[0](Xa)[:, :-1, :] # Shape(batch_size, seq_len-1, hidden_dim)
-                input0 = torch.cat([dec_input, Xa_emb], dim=2)          # Shape(batch_size, seq_len-1, H*3)                
-                gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)  # Shape(batch_size, seq_len, H*3)
-                dec_output = dec(gru_input) # Shape(batch_size, seq_len, input_dim)
-
-                print(dec_output.shape)
+                Xa_emb = self.Embedder[0](Xa)[:, :-1, :]                        # Shape(batch_size, seq_len-1, hidden_dim)
+                input0 = torch.cat([dec_input, Xa_emb], dim=2)                  # Shape(batch_size, seq_len-1, H*3)
+                gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)    # Shape(batch_size, seq_len, H*3)
+                dec_output = dec(gru_input)                                     # Shape(batch_size, seq_len, out_dim)
+                output.append(dec_output) 
 
             else:
-                attr_emb = self.Embedder[i](Xs[:, :, i-1])[:, :-1, :]  # Shape(batch_size, seq_len-1, hidden_dim)
-                input0 = torch.cat([dec_input, attr_emb], dim=2)          # Shape(batch_size, seq_len-1, H*3)
+                attr_emb = self.Embedder[i](Xs[:, :, i-1])[:, :-1, :]           # Shape(batch_size, seq_len-1, hidden_dim)
+                input0 = torch.cat([dec_input, attr_emb], dim=2)                # Shape(batch_size, seq_len-1, H*3)
                 gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)    # Shape(batch_size, seq_len, H*3)
-                dec_output = dec(gru_input)
+                dec_output = dec(gru_input)                                     # Shape(batch_size, seq_len, out_dim)
+                output.append(dec_output)
 
-                print(dec_output.shape)
-
-        return input0, dec_input
+        return output

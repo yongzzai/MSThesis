@@ -48,15 +48,35 @@ class EventSeqEncoder(nn.Module):
                           hidden_size=hidden_dim,
                           num_layers=num_layers, 
                           dropout=0.3, batch_first=True, bidirectional=True)
+        self._flattened = False
 
     def forward(self, seq):
-        self.gru.flatten_parameters()
+        # Only flatten parameters when necessary (e.g., after model.cuda() or DataParallel)
+        if not self._flattened or not self.gru._flat_weights:
+            self.gru.flatten_parameters()
+            self._flattened = True
         # seq: (Batch_size, Seq_len, Attr_num)
-        embs = []
-        for i, m in enumerate(self.attr_embs):
-            embs.append(m(seq[:, :, i]))
         
-        seq_embs = torch.cat(embs, dim=2)
+        # Optimized vectorized embedding computation
+        batch_size, seq_len, _ = seq.shape
+        num_attrs = len(self.attr_embs)
+        hidden_dim = self.attr_embs[0].embedding_dim
+        
+        if num_attrs == 1:
+            # Single attribute case - direct computation
+            seq_embs = self.attr_embs[0](seq[:, :, 0])
+        else:
+            # Multi-attribute case - vectorized computation
+            # Pre-allocate output tensor for better memory efficiency
+            seq_embs = torch.empty(batch_size, seq_len, num_attrs * hidden_dim, 
+                                 device=seq.device, dtype=self.attr_embs[0].weight.dtype)
+            
+            # Compute embeddings in chunks to avoid intermediate list creation
+            for i, emb_layer in enumerate(self.attr_embs):
+                start_idx = i * hidden_dim
+                end_idx = (i + 1) * hidden_dim
+                seq_embs[:, :, start_idx:end_idx] = emb_layer(seq[:, :, i])
+        
         # seq_embs: (batch_size, seq_len, num_attrs * hidden_dim)
 
         out, hidden = self.gru(seq_embs)
@@ -95,10 +115,13 @@ class DecoderBlock(nn.Module):
                           num_layers=num_dec_layers, 
                           dropout=0.3, batch_first=True)
         self.lin = nn.Linear(hidden_dim, input_dim)
+        self._flattened = False
 
     def forward(self, seq):
-
-        self.gru.flatten_parameters()
+        # Only flatten parameters when necessary (e.g., after model.cuda() or DataParallel)
+        if not self._flattened or not self.gru._flat_weights:
+            self.gru.flatten_parameters()
+            self._flattened = True
         out, _ = self.gru(seq)
         return self.lin(out)  # Shape(batch_size, seq_len, input_dim)
 
@@ -157,22 +180,25 @@ class Network(nn.Module):
         # context: Shape(batch_size, H*3)
         # dec_input: Shape(batch_size, seq_len-1, H*2)
 
-        output = [] 
-
-        for i, dec in enumerate(self.Decoder):
-
+        # Pre-allocate context expansion to avoid repeated unsqueeze operations
+        context_expanded = context.unsqueeze(1)  # Shape(batch_size, 1, H*3)
+        
+        # Pre-compute embeddings to avoid redundant operations in loop
+        embeddings = []
+        for i in range(len(self.Decoder)):
             if i < 1:
-                Xa_emb = self.Embedder[0](Xa)[:, :-1, :]                        # Shape(batch_size, seq_len-1, hidden_dim)
-                input0 = torch.cat([dec_input, Xa_emb], dim=2)                  # Shape(batch_size, seq_len-1, H*3)
-                gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)    # Shape(batch_size, seq_len, H*3)
-                dec_output = dec(gru_input)                                     # Shape(batch_size, seq_len, out_dim)
-                output.append(dec_output) 
-
+                emb = self.Embedder[0](Xa)[:, :-1, :]  # Shape(batch_size, seq_len-1, hidden_dim)
             else:
-                attr_emb = self.Embedder[i](Xs[:, :, i-1])[:, :-1, :]           # Shape(batch_size, seq_len-1, hidden_dim)
-                input0 = torch.cat([dec_input, attr_emb], dim=2)                # Shape(batch_size, seq_len-1, H*3)
-                gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)    # Shape(batch_size, seq_len, H*3)
-                dec_output = dec(gru_input)                                     # Shape(batch_size, seq_len, out_dim)
-                output.append(dec_output)
+                emb = self.Embedder[i](Xs[:, :, i-1])[:, :-1, :]  # Shape(batch_size, seq_len-1, hidden_dim)
+            embeddings.append(emb)
+
+        # Batch process decoder inputs to minimize cat operations
+        output = []
+        for i, (dec, emb) in enumerate(zip(self.Decoder, embeddings)):
+            # Combine dec_input and embedding efficiently
+            input0 = torch.cat([dec_input, emb], dim=2)  # Shape(batch_size, seq_len-1, H*3)
+            gru_input = torch.cat([context_expanded, input0], dim=1)  # Shape(batch_size, seq_len, H*3)
+            dec_output = dec(gru_input)  # Shape(batch_size, seq_len, out_dim)
+            output.append(dec_output)
 
         return output

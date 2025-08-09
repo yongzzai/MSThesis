@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 
 from .layers import Network
 from tqdm import tqdm
-
+import numpy as np
 
 class GAIN(nn.Module):
     def __init__(self, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, 
@@ -72,20 +72,20 @@ class GAIN(nn.Module):
 
                 TrueSeq = torch.cat([Xa.unsqueeze(2), Xs], dim=2)   # Shape(batch_size, seq_len, num_attr)
 
-                loss = 0.0
+                batch_loss = 0.0
                 for idx in range(len(logits)):
                     true = TrueSeq[:, :, idx]               # Shape(batch_size, seq_len)
                     pred = logits[idx].permute(0,2,1)       # Shape(batch_size, num_classes, seq_len)
 
-                    mask = true > 0     # Shape(batch_size, seq_len)
-                    mask[:, 0] = False  # Remove start token
-                    loss_batch = criterion(pred, true) * mask.float()   # Shape(batch_size, seq_len)
-                    loss_batch = loss_batch.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
-                    loss += loss_batch.mean()
+                    mask = true > 0     # mask pad token
+                    mask[:, 0] = False  # mask start token
+                    loss = criterion(pred, true) * mask.float()   # Shape(batch_size, seq_len)
+                    loss = loss.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
+                    batch_loss += loss.mean()
 
-                loss.backward()
+                batch_loss.backward()
                 optimizer.step()
-                epoch_loss += loss.item() / len(dataset.attribute_dims)
+                epoch_loss += batch_loss.item() / len(dataset.attribute_dims)
         
             scheduler.step()
             print("Epoch {} - Loss = {:.4f}".format(epoch+1, epoch_loss/len(loader)))
@@ -101,6 +101,9 @@ class GAIN(nn.Module):
             shuffle=False, follow_batch=['x','seq'])
         
         with torch.no_grad():
+
+            proba_res = []
+
             for batch in loader:
                 self.net.eval()
                 batch = batch.to(self.device)
@@ -110,10 +113,20 @@ class GAIN(nn.Module):
                 Act_pos = batch.act_pos
                 batch_g = batch.x_batch
 
+                TrueSeq = torch.cat([Xa.unsqueeze(2), Xs], dim=2)   # Shape(batch_size, seq_len, num_attr)
+
                 logits = self.net(Xg=Xg, Xs=Xs, Xa=Xa,
                     edge_index=edge_index, Act_pos=Act_pos, batch_g=batch_g)
-                
-                for idx in range(len(logits)):
 
+                batch_res = []
+
+                for idx in range(len(logits)):
+                    true = TrueSeq[:, :, idx].unsqueeze(2)                                   # Shape(batch_size, seq_len, 1)
                     pred = torch.nn.functional.softmax(logits[idx], dim=2)      # Shape(batch_size, seq_len, num_classes)
 
+                    proba = pred.gather(dim=2, index=true)  # Shape(batch_size, seq_len, 1)
+                    batch_res.append(proba)
+                
+                proba_res.append(torch.cat(batch_res, dim=2))  # Shape(batch_size, seq_len, num_attr)
+
+        return np.array(torch.cat(proba_res, dim=0).detach().cpu())     # Shape(num_cases, seq_len, num_attr)

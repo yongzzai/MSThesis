@@ -1,21 +1,5 @@
 import os
-import pandas as pd
-
-from baseline.GAE.gae import GAE
-from baseline.GAMA.gama import GAMA
-from baseline.GRASPED.grasped import GRASPED
-from baseline.LAE.lae import LAE
-from baseline.Sylvio import W2VLOF
-from baseline.VAE.vae import VAE
-from baseline.VAEOCSVM.vaeOCSVM import VAEOCSVM
-from baseline.bezerra import SamplingAnomalyDetector, NaiveAnomalyDetector
-
-# Tensorflow 사용
-# from baseline.dae import DAE
-# from baseline.binet.binet import BINetv3, BINetv2
-
-from baseline.boehmer import LikelihoodPlusAnomalyDetector
-from baseline.leverage import Leverage
+import numpy as np
 from utils.dataset import Dataset
 
 from utils.eval import cal_best_PRF
@@ -45,22 +29,38 @@ if __name__ == '__main__':
 
     print('number of datasets:' + str(len(dataset_names)))
     
-    print(dataset_names[0])
-    dataset = Dataset(dataset_names[0])
-
-    eventTemp = dataset.binary_targets.sum(2).flatten()
-    eventTemp[eventTemp > 1] = 1
-    
-    print("Label Shape")
-    print("Trace-level", dataset.case_target.shape)
-    print("Event-level", eventTemp.shape)
-    print("Attr-level original", dataset.binary_targets.shape)
-    print("Attr-level", dataset.binary_targets.flatten().shape)
+    print(dataset_names[12])
+    dataset = Dataset(dataset_names[12])
 
     from model.model import GAIN
 
-    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2, batch_size=64, epochs=3, lr=0.001, seed=42)
-
+    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2, batch_size=64, epochs=18, lr=0.0006, seed=42)
     gain.fit(dataset)
 
-    gain.detect(dataset)
+    res = gain.detect(dataset)      # Shape(num_cases, seq_len, num_attr)
+
+    attr_level_anomaly_scores = []
+    attr_level_anomaly_labels = []
+
+    for case_idx in range(dataset.num_cases):
+        current_res = 1 - res[case_idx,:,:]                     # Shape(seq_len, num_attr)
+        current_label = dataset.binary_targets[case_idx,:,:]    # Shape(seq_len, num_attr)
+
+        value_mask = dataset.features[0][case_idx] != 0 # Shape(seq_len,)
+        value_mask[0] = False
+
+        current_res = current_res[value_mask]
+        current_label = current_label[value_mask]
+
+        attr_level_anomaly_scores.append(current_res)
+        attr_level_anomaly_labels.append(current_label)
+
+    attr_level_anomaly_scores = np.concatenate(attr_level_anomaly_scores, axis=0).flatten()
+    attr_level_anomaly_labels = np.concatenate(attr_level_anomaly_labels, axis=0).flatten()
+
+    precisions, recalls, f1s, aupr = cal_best_PRF(attr_level_anomaly_labels, attr_level_anomaly_scores)
+
+    print("Precision", precisions)
+    print("Recall", recalls)
+    print("F1 Score", f1s)
+    print("AUPR", aupr)

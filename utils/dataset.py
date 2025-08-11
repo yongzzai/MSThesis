@@ -28,6 +28,8 @@ from utils.fs import EventLogFile
 from processmining.event import Event
 from processmining.log import EventLog
 
+from torch_geometric.utils import to_undirected
+
 
 
 def to_categorical(y, num_classes=None, dtype='float32'):

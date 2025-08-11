@@ -15,20 +15,6 @@ if __name__ == '__main__':
     if 'cache' in dataset_names:
         dataset_names.remove('cache')
 
-    dataset_names_syn = [name for name in dataset_names if (
-                                                        'gigantic' in name
-                                                        or 'huge' in name
-                                                        or 'large' in name
-                                                        or 'medium' in name
-                                                        or 'p2p' in name
-                                                        or 'paper' in name
-                                                        or 'small' in name
-                                                        or 'wide' in name
-    )]
-
-    dataset_names_real = list(set(dataset_names)-set(dataset_names_syn))
-    dataset_names_real.sort()
-
     print('number of datasets:' + str(len(dataset_names)))
     
     print(dataset_names[-9])
@@ -37,16 +23,24 @@ if __name__ == '__main__':
     from model.model import GAIN
 
     gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
-                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=18, lr=0.0004, seed=42)
+                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=18, lr=0.0004,
+                seed=42)
     gain.fit(dataset)
 
-    res = gain.detect(dataset)      # Shape(num_cases, seq_len, num_attr)
+    attr_level_pred, event_level_pred, trace_level_pred = gain.detect(dataset)      
+    # Attr Shape(num_cases, seq_len, num_attr)
+    # Event Shape(num_cases, seq_len)
+    # Trace Shape(num_cases, )
+
+    print("attr shape: ", attr_level_pred.shape)
+    print("event shape: ", event_level_pred.shape)
+    print("trace shape: ", trace_level_pred.shape)
 
     attr_level_anomaly_scores = []
     attr_level_anomaly_labels = []
 
     for case_idx in range(dataset.num_cases):
-        current_res = 1 - res[case_idx,:,:]                     # Shape(seq_len, num_attr)
+        current_res = 1 - attr_level_pred[case_idx,:,:]         # Shape(seq_len, num_attr)
         current_label = dataset.binary_targets[case_idx,:,:]    # Shape(seq_len, num_attr)
 
         value_mask = dataset.features[0][case_idx] != 0 # Shape(seq_len,)

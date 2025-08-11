@@ -7,18 +7,21 @@ import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
 
+from .scheduler import WarmupScheduler
 from .layers import Network
 from tqdm import tqdm
 import numpy as np
+import os
 
 class GAIN(nn.Module):
 
     def __init__(self, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, 
                  enc_dropout:float, dec_dropout:float,
-                 batch_size:int, epochs:int, lr:float, seed:int):
+                 batch_size:int, epochs:int, lr:float, seed:int=None):
         super(GAIN, self).__init__()
 
-        torch.manual_seed(int(seed))
+        if seed is not None:
+            torch.manual_seed(int(seed))
 
         self.hidden_dim = hidden_dim
         self.num_enc_layers = num_enc_layers
@@ -46,17 +49,23 @@ class GAIN(nn.Module):
         
         loader = DataLoader(
             dataset=dataset.DataChunks, batch_size=self.batch_size,
-            shuffle=True, follow_batch=['x','seq'])
+            shuffle=True, follow_batch=['x','seq'], pin_memory=True, num_workers=os.cpu_count()//4)
         
         optimizer = torch.optim.AdamW(
             self.net.parameters(),
             lr=self.lr, weight_decay=1e-5)
         
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        total_steps = len(loader) * self.epochs
+        warmup_steps = int(0.1 * total_steps)
+
+        scheduler = WarmupScheduler(
             optimizer=optimizer,
-            T_max=len(loader), eta_min=0.)
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            max_lr=self.lr,
+            min_lr=0.0)
         
-        criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.05)
+        criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.1)
 
         for epoch in range(self.epochs):
 
@@ -90,27 +99,28 @@ class GAIN(nn.Module):
                     loss = loss.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
                     batch_loss += loss.mean()
 
-                batch_loss.backward()                
+                batch_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=5.0)
                 optimizer.step()
+
+                current_lr = scheduler.step()
                 epoch_loss += batch_loss.item() / len(dataset.attribute_dims)
         
-            scheduler.step()
-            print("Epoch {} - Loss = {:.4f}".format(epoch+1, epoch_loss/len(loader)))
+            print("Epoch {} - Loss = {:.4f}, LR = {:.6f}".format(epoch+1, epoch_loss/len(loader), current_lr))
 
 
     def detect(self, dataset):
-        self.net.eval()
         
         loader = DataLoader(
             dataset=dataset.DataChunks, batch_size=self.batch_size,
             shuffle=False, follow_batch=['x','seq'])
         
+        self.net.eval()        
+        
         with torch.no_grad():
             proba_res = []
 
             for batch in loader:
-
                 batch = batch.to(self.device)
                 TrueSeq = torch.cat([batch.act_origin.unsqueeze(2), batch.seq], dim=2)   # Shape(batch_size, seq_len, num_attr)
 
@@ -127,4 +137,8 @@ class GAIN(nn.Module):
                 
                 proba_res.append(torch.cat(batch_res, dim=2))  # Shape(batch_size, seq_len, num_attr)
 
-        return np.array(torch.cat(proba_res, dim=0).detach().cpu())     # Shape(num_cases, seq_len, num_attr)
+        attr_anomaly_scores = np.array(torch.cat(proba_res, dim=0).detach().cpu())
+        event_anomaly_scores = attr_anomaly_scores.max((2))
+        trace_anomaly_scores = attr_anomaly_scores.max((1,2))
+
+        return attr_anomaly_scores, event_anomaly_scores, trace_anomaly_scores

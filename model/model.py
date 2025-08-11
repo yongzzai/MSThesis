@@ -12,15 +12,20 @@ from tqdm import tqdm
 import numpy as np
 
 class GAIN(nn.Module):
+
     def __init__(self, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, 
+                 enc_dropout:float, dec_dropout:float,
                  batch_size:int, epochs:int, lr:float, seed:int):
         super(GAIN, self).__init__()
 
         torch.manual_seed(int(seed))
-        
+
         self.hidden_dim = hidden_dim
         self.num_enc_layers = num_enc_layers
         self.num_dec_layers = num_dec_layers
+        self.enc_rate = enc_dropout
+        self.dec_rate = dec_dropout
+
         self.batch_size = batch_size
         self.epochs = epochs
         self.lr = lr
@@ -33,8 +38,10 @@ class GAIN(nn.Module):
         self.net = Network(attr_dims=dataset.attribute_dims,
                            hidden_dim=self.hidden_dim,
                            num_enc_layers=self.num_enc_layers,
-                           num_dec_layers=self.num_dec_layers)
-        
+                           num_dec_layers=self.num_dec_layers,
+                           encoder_dropout=self.enc_rate,
+                           decoder_dropout=self.dec_rate)
+
         self.net = self.net.to(self.device)
         
         loader = DataLoader(
@@ -49,7 +56,7 @@ class GAIN(nn.Module):
             optimizer=optimizer,
             T_max=len(loader), eta_min=0.)
         
-        criterion = nn.CrossEntropyLoss(reduction='none')
+        criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.05)
 
         for epoch in range(self.epochs):
 
@@ -83,7 +90,8 @@ class GAIN(nn.Module):
                     loss = loss.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
                     batch_loss += loss.mean()
 
-                batch_loss.backward()
+                batch_loss.backward()                
+                torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=5.0)
                 optimizer.step()
                 epoch_loss += batch_loss.item() / len(dataset.attribute_dims)
         
@@ -92,34 +100,24 @@ class GAIN(nn.Module):
 
 
     def detect(self, dataset):
-
-        for param in self.net.parameters():
-            param.requires_grad = False
-
+        self.net.eval()
+        
         loader = DataLoader(
             dataset=dataset.DataChunks, batch_size=self.batch_size,
             shuffle=False, follow_batch=['x','seq'])
         
         with torch.no_grad():
-
             proba_res = []
 
             for batch in loader:
-                self.net.eval()
+
                 batch = batch.to(self.device)
+                TrueSeq = torch.cat([batch.act_origin.unsqueeze(2), batch.seq], dim=2)   # Shape(batch_size, seq_len, num_attr)
 
-                Xg, Xs, Xa = batch.x, batch.seq, batch.act_origin
-                edge_index = batch.edge_index
-                Act_pos = batch.act_pos
-                batch_g = batch.x_batch
-
-                TrueSeq = torch.cat([Xa.unsqueeze(2), Xs], dim=2)   # Shape(batch_size, seq_len, num_attr)
-
-                logits = self.net(Xg=Xg, Xs=Xs, Xa=Xa,
-                    edge_index=edge_index, Act_pos=Act_pos, batch_g=batch_g)
+                logits = self.net(Xg=batch.x, Xs=batch.seq, Xa=batch.act_origin,
+                    edge_index=batch.edge_index, Act_pos=batch.act_pos, batch_g=batch.x_batch)
 
                 batch_res = []
-
                 for idx in range(len(logits)):
                     true = TrueSeq[:, :, idx].unsqueeze(2)                                   # Shape(batch_size, seq_len, 1)
                     pred = torch.nn.functional.softmax(logits[idx], dim=2)      # Shape(batch_size, seq_len, num_classes)

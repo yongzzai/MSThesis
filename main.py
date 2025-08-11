@@ -1,9 +1,11 @@
 import os
 import numpy as np
 from utils.dataset import Dataset
+from scipy.ndimage import uniform_filter1d
 
 from utils.eval import cal_best_PRF
 from utils.fs import EVENTLOG_DIR, ROOT_DIR
+import argparse
 
 
 if __name__ == '__main__':
@@ -29,12 +31,13 @@ if __name__ == '__main__':
 
     print('number of datasets:' + str(len(dataset_names)))
     
-    print(dataset_names[12])
-    dataset = Dataset(dataset_names[12])
+    print(dataset_names[-9])
+    dataset = Dataset(dataset_names[-9])
 
     from model.model import GAIN
 
-    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2, batch_size=64, epochs=18, lr=0.0006, seed=42)
+    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
+                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=18, lr=0.0004, seed=42)
     gain.fit(dataset)
 
     res = gain.detect(dataset)      # Shape(num_cases, seq_len, num_attr)

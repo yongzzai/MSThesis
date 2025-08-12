@@ -1,11 +1,10 @@
 import os
-import numpy as np
 from utils.dataset import Dataset
-from scipy.ndimage import uniform_filter1d
 
 from utils.eval import cal_best_PRF
 from utils.fs import EVENTLOG_DIR, ROOT_DIR
 import argparse
+import time
 
 
 if __name__ == '__main__':
@@ -17,47 +16,35 @@ if __name__ == '__main__':
 
     print('number of datasets:' + str(len(dataset_names)))
     
-    print(dataset_names[-9])
-    dataset = Dataset(dataset_names[-9])
+    print(dataset_names[1])
+
+    start_time = time.time()
+    dataset = Dataset(dataset_names[1])
 
     from model.model import GAIN
 
     gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
-                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=18, lr=0.0004,
+                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0005,
                 seed=42)
+
     gain.fit(dataset)
 
-    attr_level_pred, event_level_pred, trace_level_pred = gain.detect(dataset)      
-    # Attr Shape(num_cases, seq_len, num_attr)
-    # Event Shape(num_cases, seq_len)
-    # Trace Shape(num_cases, )
+    end_time = time.time()
+    duration = (end_time - start_time).__round__(3)
 
-    print("attr shape: ", attr_level_pred.shape)
-    print("event shape: ", event_level_pred.shape)
-    print("trace shape: ", trace_level_pred.shape)
+    trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = gain.detect(dataset)      
 
-    attr_level_anomaly_scores = []
-    attr_level_anomaly_labels = []
+    event_target = dataset.binary_targets.sum(2).flatten()
+    event_target[event_target > 1] = 1
 
-    for case_idx in range(dataset.num_cases):
-        current_res = 1 - attr_level_pred[case_idx,:,:]         # Shape(seq_len, num_attr)
-        current_label = dataset.binary_targets[case_idx,:,:]    # Shape(seq_len, num_attr)
+    precision_t, recall_t, f1_t, aupr_t = cal_best_PRF(dataset.case_target, trace_level_anomaly_scores)
+    precision_e, recall_e, f1_e, aupr_e = cal_best_PRF(event_target, event_level_anomaly_scores.flatten())
+    precision_a, recall_a, f1_a, aupr_a = cal_best_PRF(dataset.binary_targets.flatten(), attr_level_anomaly_scores.flatten())
 
-        value_mask = dataset.features[0][case_idx] != 0 # Shape(seq_len,)
-        value_mask[0] = False
-
-        current_res = current_res[value_mask]
-        current_label = current_label[value_mask]
-
-        attr_level_anomaly_scores.append(current_res)
-        attr_level_anomaly_labels.append(current_label)
-
-    attr_level_anomaly_scores = np.concatenate(attr_level_anomaly_scores, axis=0).flatten()
-    attr_level_anomaly_labels = np.concatenate(attr_level_anomaly_labels, axis=0).flatten()
-
-    precisions, recalls, f1s, aupr = cal_best_PRF(attr_level_anomaly_labels, attr_level_anomaly_scores)
-
-    print("Precision", precisions)
-    print("Recall", recalls)
-    print("F1 Score", f1s)
-    print("AUPR", aupr)
+    print("Trace-level")
+    print(f"precision: {precision_t}, recall: {recall_t}, f1: {f1_t}, aupr: {aupr_t}")
+    print("Event-level")
+    print(f"precision: {precision_e}, recall: {recall_e}, f1: {f1_e}, aupr: {aupr_e}")
+    print("Attribute-level")
+    print(f"precision: {precision_a}, recall: {recall_a}, f1: {f1_a}, aupr: {aupr_a}")
+    print(f"Time Consumption: {duration}")

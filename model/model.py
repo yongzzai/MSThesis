@@ -52,8 +52,7 @@ class GAIN(nn.Module):
             shuffle=True, follow_batch=['x','seq'], pin_memory=True, num_workers=os.cpu_count()//4)
         
         optimizer = torch.optim.AdamW(
-            self.net.parameters(),
-            lr=self.lr, weight_decay=1e-5)
+            self.net.parameters(), lr=self.lr)
         
         total_steps = len(loader) * self.epochs
         warmup_steps = int(0.1 * total_steps)
@@ -94,7 +93,7 @@ class GAIN(nn.Module):
                     pred = logits[idx].permute(0,2,1)       # Shape(batch_size, num_classes, seq_len)
 
                     mask = true > 0     # mask pad token
-                    mask[:, 0] = False  # mask start token
+                    # mask[:, 0] = False  # mask start token
                     loss = criterion(pred, true) * mask.float()   # Shape(batch_size, seq_len)
                     loss = loss.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
                     batch_loss += loss.mean()
@@ -115,30 +114,41 @@ class GAIN(nn.Module):
             dataset=dataset.DataChunks, batch_size=self.batch_size,
             shuffle=False, follow_batch=['x','seq'])
         
-        self.net.eval()        
-        
+        self.net.eval()
         with torch.no_grad():
-            proba_res = []
-
+            attr_result = []
             for batch in loader:
                 batch = batch.to(self.device)
+
                 TrueSeq = torch.cat([batch.act_origin.unsqueeze(2), batch.seq], dim=2)   # Shape(batch_size, seq_len, num_attr)
+                pad_mask = TrueSeq[:,:,0] != 0 # Shape(batch_size, seq_len)
+                pad_mask = pad_mask.unsqueeze(2)  # Shape(batch_size, seq_len, 1)
 
                 logits = self.net(Xg=batch.x, Xs=batch.seq, Xa=batch.act_origin,
                     edge_index=batch.edge_index, Act_pos=batch.act_pos, batch_g=batch.x_batch)
-
-                batch_res = []
-                for idx in range(len(logits)):
-                    true = TrueSeq[:, :, idx].unsqueeze(2)                                   # Shape(batch_size, seq_len, 1)
-                    pred = torch.nn.functional.softmax(logits[idx], dim=2)      # Shape(batch_size, seq_len, num_classes)
-
-                    proba = pred.gather(dim=2, index=true)  # Shape(batch_size, seq_len, 1)
-                    batch_res.append(proba)
+                # logits = [(B, S, num_classes), (B, S, num_classes), ...]
                 
-                proba_res.append(torch.cat(batch_res, dim=2))  # Shape(batch_size, seq_len, num_attr)
+                current_batch_res = []
+                for idx, logit in enumerate(logits):
+                    true_idx = TrueSeq[:, :, idx].unsqueeze(2)              # Shape(batch_size, seq_len, 1)
+                    pred = torch.softmax(logit, dim=2)      # Shape(batch_size, seq_len, num_classes)
+                    pred = 1 - pred
 
-        attr_anomaly_scores = np.array(torch.cat(proba_res, dim=0).detach().cpu())
-        event_anomaly_scores = attr_anomaly_scores.max((2))
-        trace_anomaly_scores = attr_anomaly_scores.max((1,2))
+                    probs = pred.gather(dim=2, index=true_idx) # Shape(batch_size, seq_len, 1)
 
-        return attr_anomaly_scores, event_anomaly_scores, trace_anomaly_scores
+                    max_entropy = torch.log(torch.tensor(pred.size(2), dtype=torch.float)).to(self.device)
+                    entropy = -(pred * torch.log(pred + 1e-10)).sum(dim=2, keepdim=True)
+                    entropy_score = entropy/max_entropy         # Shape(batch_size, seq_len, 1)
+
+                    anomaly_score = (probs + entropy_score) / 2.0
+                    anomaly_score = anomaly_score * pad_mask.float()
+
+                    current_batch_res.append(anomaly_score)
+                
+                attr_result.append(torch.cat(current_batch_res, dim=2)) # Shape(batch_size, seq_len, num_attr)
+        
+        attr_level_anomaly_score = np.array(torch.cat(attr_result, dim=0).detach().cpu())
+        event_level_anomaly_score = attr_level_anomaly_score.max((2))  # Shape(num_cases, seq_len)
+        trace_level_anomaly_score = attr_level_anomaly_score.max((1,2)) # Shape(num_cases,)
+
+        return trace_level_anomaly_score, event_level_anomaly_score, attr_level_anomaly_score

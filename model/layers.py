@@ -205,7 +205,6 @@ class Network(nn.Module):
 
         output = []
         for i, (dec, emb) in enumerate(zip(self.Decoder, embeddings)):
-            # Combine dec_input and embedding efficiently
             input0 = torch.cat([dec_input, emb], dim=2)  # Shape(batch_size, seq_len-1, H*3)
             gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)  # Shape(batch_size, seq_len, H*3)
             dec_output = dec(gru_input, emb)  # Shape(batch_size, seq_len, out_dim)

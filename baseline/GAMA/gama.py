@@ -131,13 +131,13 @@ class GAMA():
                     # 取比实际出现的属性值大的其他属性值的概率之和
                     temp = attr_reconstruction_outputs[attr_index]
                     index = Xs_list[attr_index].unsqueeze(2)
-                    probs = temp.gather(2, index)
-                    temp[(temp <= probs)] = 0
-                    res = temp.sum(2)
-                    res = res * (~mask)
+                    probs = temp.gather(2, index)                   # 실제값의 인덱스에 해당하는 확률값
+                    temp[(temp <= probs)] = 0                       # probs보다 작으면 전부 0으로 설정
+                    res = temp.sum(2)                               # probs와 probs보다 큰 값들을 전부 합함
+                    res = res * (~mask)                             # 패딩 마스크
                     this_res.append(res)
 
-                final_res.append(torch.stack(this_res, 2))
+                final_res.append(torch.stack(this_res, 2))          
 
                 pre = bathc_i
 

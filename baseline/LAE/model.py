@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler
 from torch.autograd import Variable
-from torchvision import transforms
+#from torchvision import transforms
 
 class EncoderLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, device):

@@ -16,15 +16,15 @@ if __name__ == '__main__':
 
     print('number of datasets:' + str(len(dataset_names)))
     
-    print(dataset_names[1])
+    print(dataset_names[-7])
 
     start_time = time.time()
-    dataset = Dataset(dataset_names[1])
+    dataset = Dataset(dataset_names[-7])
 
     from model.model import GAIN
 
     gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
-                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0005,
+                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0004,
                 seed=42)
 
     gain.fit(dataset)

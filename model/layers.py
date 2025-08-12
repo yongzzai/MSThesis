@@ -4,14 +4,14 @@
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATConv, global_mean_pool, PositionalEncoding
+from torch_geometric.nn import GATConv, global_mean_pool
 
 
 class GraphEncoder(nn.Module):
     def __init__(self, attr_dims:list, hidden_dim:int, dropout:float=0.3):
         super(GraphEncoder, self).__init__()
 
-        self.acts_embedding = nn.Embedding(attr_dims[0]+1, hidden_dim)
+        self.acts_embedding = nn.Embedding(attr_dims[0]+1, hidden_dim, padding_idx=0)
         
         self.conv1 = GATConv(in_channels=hidden_dim,
                             out_channels=hidden_dim,
@@ -24,17 +24,20 @@ class GraphEncoder(nn.Module):
         self.conv2 = GATConv(in_channels=hidden_dim * 2,
                             out_channels=hidden_dim,
                             heads=2, dropout=dropout)
-        self.post2 = nn.Linear(hidden_dim * 2, hidden_dim)
+
+        self.ffn = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Linear(hidden_dim * 2, hidden_dim))
 
     def forward(self, x, edge_index, batch_idx):
 
         x_emb = self.acts_embedding(x).squeeze(1)  # Shape(A, H)
         
-        h = self.conv1(x_emb, edge_index)
-        h = self.post1(h)
+        out1 = self.conv1(x_emb, edge_index)
+        out1 = self.post1(out1)     # Shape(A, 2H)
 
-        h = self.conv2(h, edge_index)   # Shape(A, 2H)
-        h = self.post2(h)
+        h = self.conv2(out1, edge_index)   # Shape(A, 2H)
+        h = self.ffn(h)
 
         z = global_mean_pool(h, batch_idx)
         return h, z
@@ -44,7 +47,7 @@ class EventSeqEncoder(nn.Module):
     def __init__(self, attr_dims:list, hidden_dim:int, num_layers:int, dropout:float=0.3):
         super(EventSeqEncoder, self).__init__()
 
-        self.attr_embs = nn.ModuleList([nn.Embedding(dim+1, hidden_dim) for dim in attr_dims[1:]])
+        self.attr_embs = nn.ModuleList([nn.Embedding(dim+1, hidden_dim, padding_idx=0) for dim in attr_dims[1:]])
         
         self.input_dim = hidden_dim * len(attr_dims[1:])
         self.input_norm = nn.LayerNorm(self.input_dim)
@@ -54,10 +57,23 @@ class EventSeqEncoder(nn.Module):
                           num_layers=num_layers, 
                           dropout=dropout, 
                           batch_first=True, bidirectional=True)
-                        
+        self.out_norm = nn.LayerNorm(hidden_dim * 2)
+
+        self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=1, 
+                                               dropout=dropout,batch_first=True)
+        
+        self.ffn = nn.Sequential(
+            nn.LayerNorm(hidden_dim*2),
+            nn.Linear(hidden_dim*2, hidden_dim*2),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Dropout(p=dropout),
+            nn.Linear(hidden_dim*2, hidden_dim*2))
+
+        self.last_norm = nn.LayerNorm(hidden_dim * 2)
+
         self._flattened = False
 
-    def forward(self, seq):
+    def forward(self, seq, mask):
         if not self._flattened or not self.gru._flat_weights:
             self.gru.flatten_parameters()
             self._flattened = True
@@ -78,33 +94,71 @@ class EventSeqEncoder(nn.Module):
                 seq_embs[:, :, start_idx:end_idx] = emb_layer(seq[:, :, i])
         
         seq_embs = self.input_norm(seq_embs)
-        out, hidden = self.gru(seq_embs)        # seq_embs: (batch_size, seq_len, num_attrs * hidden_dim)
+
+        lengths = (~mask).sum(dim=1)
+
+        packed = nn.utils.rnn.pack_padded_sequence(
+            seq_embs, lengths.cpu(), batch_first=True, enforce_sorted=False)
+
+        gru_out_packed, hidden = self.gru(packed)
+
+        gru_out, _ = nn.utils.rnn.pad_packed_sequence(
+            gru_out_packed, batch_first=True, total_length=seq_len)
+
+        attn_in = self.out_norm(gru_out)  # Shape(batch_size, seq_len, hidden_dim * 2)
+        attn_out, _ = self.attention(attn_in, attn_in, attn_in, key_padding_mask=mask)  # Self-Attention
+
+        gru_out = attn_out + gru_out
+        enc_out = self.ffn(gru_out)
+
+        enc_out = enc_out + gru_out
+        enc_out = self.last_norm(enc_out)
+
+        enc_out = enc_out.masked_fill(mask.unsqueeze(-1), 0.0)
 
         fwd, bwd = hidden[-2, :, :], hidden[-1, :, :]   # Shape(batch_size, hidden)
-        return out, fwd, bwd
+        return enc_out, fwd, bwd
 
 
 class Mixer(nn.Module):
-    def __init__(self, hidden_dim, dropout:float=0.3):
+    def __init__(self, hidden_dim, m=4, dropout:float=0.3):
         super(Mixer, self).__init__()
 
-        self.context_mixer = nn.Sequential(
-            nn.LayerNorm(hidden_dim*3),
-            nn.Linear(hidden_dim*3, hidden_dim*3),
-            nn.LeakyReLU(negative_slope=0.2), 
-            nn.Dropout(p=dropout))
+        self.rep_dim = hidden_dim * 3
+        self.m = m
 
-        self.vector_mixer = nn.Sequential(
-            nn.LayerNorm(hidden_dim*4),
-            nn.Linear(hidden_dim*4, hidden_dim*2),
-            nn.LeakyReLU(negative_slope=0.2), 
-            nn.Dropout(p=dropout))
+        self.input_norm = nn.LayerNorm(self.rep_dim)
+        self.kv_norm = nn.LayerNorm(self.rep_dim)
+        self.kv_proj = nn.Linear(self.rep_dim, m*self.rep_dim)
+        self.cross_attn = nn.MultiheadAttention(self.rep_dim, num_heads=1, 
+                                                dropout=dropout, batch_first=True)
 
-    def forward(self, h, z):
-        rep = self.vector_mixer(h)    # Shape(batch_size, seq_len, H*2)
-        rep = rep[:, :-1, :]  # Shape(batch_size, seq_len-1, H*2)
-        context = self.context_mixer(z)  # Shape(batch_size, H*3)
-        return rep, context
+        self.residual = nn.Linear(self.rep_dim, hidden_dim*2)
+        
+        self.ffn = nn.Sequential(
+            nn.LayerNorm(self.rep_dim),
+            nn.Linear(self.rep_dim, self.rep_dim),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Dropout(p=dropout),
+            nn.Linear(self.rep_dim, hidden_dim*2))
+
+    def forward(self, rep, z, mask):
+
+        context = self.kv_norm(z)
+        kv = self.kv_proj(context).view(rep.shape[0], self.m, self.rep_dim)
+
+        attn_in = self.input_norm(rep)
+        attn_in = attn_in.masked_fill(mask.unsqueeze(-1), 0.0)  # Mask padding tokens
+        attn_out, _ = self.cross_attn(attn_in, kv, kv)
+
+        rep = attn_out + rep
+        ffn_out = self.ffn(rep)
+        mixer_out = ffn_out + self.residual(rep)
+        mixer_out = mixer_out.masked_fill(mask.unsqueeze(-1), 0.0)  # Mask padding tokens
+
+        mixer_out = mixer_out[:, :-1, :]    # Shape(batch_size, seq_len-1, H*2)
+
+        return mixer_out, context
 
 
 class DecoderBlock(nn.Module):
@@ -118,26 +172,37 @@ class DecoderBlock(nn.Module):
                           num_layers=num_dec_layers, 
                           dropout=dropout, 
                           batch_first=True)
-
         self.fc = nn.Sequential(
-            nn.LayerNorm(hidden_dim*2),
-            nn.Linear(hidden_dim*2, input_dim))
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Linear(hidden_dim * 2, input_dim))
 
         self._flattened = False
 
-    def forward(self, seq, emb):
+    def forward(self, seq, emb, pad_mask):
 
         if not self._flattened or not self.gru._flat_weights:
             self.gru.flatten_parameters()
             self._flattened = True
             
         seq = self.input_norm(seq)
-        gru_out, _ = self.gru(seq)  # Shape(batch_size, seq_len, hidden_dim)
 
+        pad_mask = pad_mask.to(torch.bool)
+        seq = seq.masked_fill(pad_mask.unsqueeze(-1), 0.0)  # Mask padding tokens
+        lengths = (~pad_mask).sum(dim=1).clamp_min(1)
+
+        packed_seq = nn.utils.rnn.pack_padded_sequence(
+                seq, lengths.cpu(), batch_first=True, enforce_sorted=False)
+
+        gru_out_packed, _ = self.gru(packed_seq)  # Shape(batch_size, seq_len, hidden_dim)
+        gru_out, _ = nn.utils.rnn.pad_packed_sequence(
+            gru_out_packed, batch_first=True, total_length=seq.size(1))
+        
         emb = torch.nn.functional.pad(emb, (0, 0, 1, 0), value=0.0)  # Shape(batch_size, seq_len, hidden_dim)
         out = torch.cat([gru_out, emb], dim=2)  # Shape(batch_size, seq_len, hidden_dim*2)
+        out = self.fc(out)  # Shape(batch_size, seq_len, input_dim)
 
-        return self.fc(out)  # Shape(batch_size, seq_len, input_dim)
+        out = out.masked_fill(pad_mask.unsqueeze(-1), 0.0)  # Mask padding tokens
+        return out
 
 
 class Network(nn.Module):
@@ -148,11 +213,11 @@ class Network(nn.Module):
 
         self.GraphEnc = GraphEncoder(attr_dims, hidden_dim, dropout=encoder_dropout)
         self.EventSeqEnc = EventSeqEncoder(attr_dims, hidden_dim, num_enc_layers, dropout=encoder_dropout)
-        self.PosEnc = PositionalEncoding(hidden_dim)
+        # self.PosEnc = PositionalEncoding(hidden_dim)
         self.Mixer = Mixer(hidden_dim, dropout=encoder_dropout)
 
         self.tfEmbedder = nn.ModuleList([
-            nn.Embedding(dim+1, hidden_dim)
+            nn.Embedding(dim+1, hidden_dim, padding_idx=0)
             for dim in attr_dims])
 
         self.Decoder = nn.ModuleList([
@@ -161,16 +226,18 @@ class Network(nn.Module):
                          for dim in attr_dims])
                 
     def forward(self, Xg, Xs, Xa, edge_index, Act_pos, batch_g):
+        
+        pad_mask = (Xs == 0).all(dim=2)
+        dec_pad_mask = torch.cat([torch.zeros_like(pad_mask[:, :1]), pad_mask[:, :-1]], dim=1)
 
         out_g, z_g = self.GraphEnc(Xg, edge_index, batch_g)         # Shape(num_nodes, H), Shape(batch_size, H)
-        out_s, h_fwd, h_bwd = self.EventSeqEnc(Xs)      # Shape(batch_size, seq_len, H*2), Shape(batch_size, H), Shape(batch_size, H)
+        out_s, h_fwd, h_bwd = self.EventSeqEnc(Xs, pad_mask)      # Shape(batch_size, seq_len, H*2), Shape(batch_size, H), Shape(batch_size, H)
 
         batch_size, seq_len, _ = out_s.shape
         hidden_dim = out_g.shape[1]
-        
-        # Mapping Activity Embeddings
-        mapped_g = torch.zeros(batch_size, seq_len, hidden_dim, device=out_g.device)
-        
+
+        mapped_g = torch.zeros(batch_size, seq_len, hidden_dim, device=out_g.device)    # mapping activity embeddings
+
         valid_mask = Act_pos >= 0
         valid_act_pos = Act_pos[valid_mask]
         
@@ -180,24 +247,15 @@ class Network(nn.Module):
         mapped_g[batch_indices, seq_indices] = out_g[valid_act_pos]
         
         rep = torch.cat([out_s, mapped_g], dim=2)  # Shape(batch_size, seq_len, H*3)
-
-        # positional encoding
-        temp = torch.arange(seq_len, device=out_s.device).reshape(-1, 1) # Shape(seq_len, 1)
-        pos = self.PosEnc(temp) # Shape(seq_len, hidden_dim)
-        pos = pos.unsqueeze(0).expand(batch_size, -1, -1)   # Shape(batch_size, seq_len, hidden_dim)
-        pos = pos * valid_mask.unsqueeze(2).float()  # Shape(batch_size, seq_len, hidden_dim)
-
-        rep = torch.cat([rep, pos], dim=2)  # Shape(batch_size, seq_len, H*4)
-        
         z = torch.cat([z_g, h_fwd, h_bwd], dim=1)  # Shape(batch_size, H*3)
-
-        dec_input, context = self.Mixer(rep, z)
+        
+        dec_input, context = self.Mixer(rep, z, pad_mask)
         # context: Shape(batch_size, H*3)
         # dec_input: Shape(batch_size, seq_len-1, H*2)
         
         embeddings = []
         for i in range(len(self.Decoder)):
-            if i < 1:
+            if i == 0:
                 emb = self.tfEmbedder[0](Xa)[:, :-1, :]  # Shape(batch_size, seq_len-1, hidden_dim)
             else:
                 emb = self.tfEmbedder[i](Xs[:, :, i-1])[:, :-1, :]  # Shape(batch_size, seq_len-1, hidden_dim)
@@ -207,7 +265,7 @@ class Network(nn.Module):
         for i, (dec, emb) in enumerate(zip(self.Decoder, embeddings)):
             input0 = torch.cat([dec_input, emb], dim=2)  # Shape(batch_size, seq_len-1, H*3)
             gru_input = torch.cat([context.unsqueeze(1), input0], dim=1)  # Shape(batch_size, seq_len, H*3)
-            dec_output = dec(gru_input, emb)  # Shape(batch_size, seq_len, out_dim)
+            dec_output = dec(gru_input, emb, dec_pad_mask)  # Shape(batch_size, seq_len, out_dim)
             output.append(dec_output)
 
         return output

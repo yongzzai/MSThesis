@@ -117,11 +117,11 @@ class GAIN(nn.Module):
         self.net.eval()
         with torch.no_grad():
             attr_result = []
-            for batch in loader:
+            for i, batch in enumerate(loader):
                 batch = batch.to(self.device)
 
                 TrueSeq = torch.cat([batch.act_origin.unsqueeze(2), batch.seq], dim=2)   # Shape(batch_size, seq_len, num_attr)
-                pad_mask = TrueSeq[:,:,0] != 0 # Shape(batch_size, seq_len)
+                pad_mask = TrueSeq[:,:,0] != 0 # Shape(batch_size, seq_len), pad위치는 True
                 pad_mask = pad_mask.unsqueeze(2)  # Shape(batch_size, seq_len, 1)
 
                 logits = self.net(Xg=batch.x, Xs=batch.seq, Xa=batch.act_origin,
@@ -132,17 +132,18 @@ class GAIN(nn.Module):
                 for idx, logit in enumerate(logits):
                     true_idx = TrueSeq[:, :, idx].unsqueeze(2)              # Shape(batch_size, seq_len, 1)
                     pred = torch.softmax(logit, dim=2)      # Shape(batch_size, seq_len, num_classes)
-                    pred = 1 - pred
 
-                    probs = pred.gather(dim=2, index=true_idx) # Shape(batch_size, seq_len, 1)
+                    true_proba = 1 - pred.gather(dim=2, index=true_idx) # Shape(batch_size, seq_len, 1)
+                    all_idx = torch.arange(pred.size(2), device=pred.device).view(1, 1, -1)
+                    remain_mask = all_idx != true_idx
+                    remain_probas = pred[remain_mask].view(pred.size(0), pred.size(1), -1)  # Shape(batch_size, seq_len, num_classes - 1)
 
-                    max_entropy = torch.log(torch.tensor(pred.size(2), dtype=torch.float)).to(self.device)
-                    entropy = -(pred * torch.log(pred + 1e-10)).sum(dim=2, keepdim=True)
-                    entropy_score = entropy/max_entropy         # Shape(batch_size, seq_len, 1)
+                    max_entropy = torch.log(torch.tensor(pred.size(2)-1, dtype=torch.float)).to(self.device)
+                    entropy = - (remain_probas * torch.log(remain_probas + 1e-10)).sum(dim=2, keepdim=True) # Shape(batch_size, seq_len, 1)
+                    entropy_score = entropy / max_entropy
 
-                    anomaly_score = (probs + entropy_score) / 2.0
+                    anomaly_score = (true_proba + entropy_score) / 2.0
                     anomaly_score = anomaly_score * pad_mask.float()
-
                     current_batch_res.append(anomaly_score)
                 
                 attr_result.append(torch.cat(current_batch_res, dim=2)) # Shape(batch_size, seq_len, num_attr)

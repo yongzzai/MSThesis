@@ -52,10 +52,10 @@ class GAIN(nn.Module):
             shuffle=True, follow_batch=['x','seq'], pin_memory=True, num_workers=os.cpu_count()//4)
         
         optimizer = torch.optim.AdamW(
-            self.net.parameters(), lr=self.lr)
+            self.net.parameters(), lr=self.lr, weight_decay=1e-4)
         
         total_steps = len(loader) * self.epochs
-        warmup_steps = int(0.1 * total_steps)
+        warmup_steps = 3
 
         scheduler = WarmupScheduler(
             optimizer=optimizer,
@@ -64,17 +64,17 @@ class GAIN(nn.Module):
             max_lr=self.lr,
             min_lr=0.0)
         
-        criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.1)
+        criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.1, ignore_index=0)
 
         for epoch in range(self.epochs):
 
             self.net.train()
             epoch_loss = 0.0
             
+            iteration = 0
             for batch in tqdm(loader, desc="Epoch {}".format(epoch+1)):
 
                 optimizer.zero_grad()
-
                 batch = batch.to(self.device)
 
                 Xg, Xs, Xa = batch.x, batch.seq, batch.act_origin
@@ -93,7 +93,7 @@ class GAIN(nn.Module):
                     pred = logits[idx].permute(0,2,1)       # Shape(batch_size, num_classes, seq_len)
 
                     mask = true > 0     # mask pad token
-                    # mask[:, 0] = False  # mask start token
+                    mask[:, 0] = False  # mask start token
                     loss = criterion(pred, true) * mask.float()   # Shape(batch_size, seq_len)
                     loss = loss.sum(dim=1) / mask.float().sum(dim=1)       # Shape(batch_size)
                     batch_loss += loss.mean()
@@ -104,6 +104,8 @@ class GAIN(nn.Module):
 
                 current_lr = scheduler.step()
                 epoch_loss += batch_loss.item() / len(dataset.attribute_dims)
+
+                iteration = iteration + 1
         
             print("Epoch {} - Loss = {:.4f}, LR = {:.6f}".format(epoch+1, epoch_loss/len(loader), current_lr))
 
@@ -122,28 +124,33 @@ class GAIN(nn.Module):
 
                 TrueSeq = torch.cat([batch.act_origin.unsqueeze(2), batch.seq], dim=2)   # Shape(batch_size, seq_len, num_attr)
                 pad_mask = TrueSeq[:,:,0] != 0 # Shape(batch_size, seq_len), pad위치는 True
+                pad_mask[:, 0] = False  # <start> token은 pad가 아님
                 pad_mask = pad_mask.unsqueeze(2)  # Shape(batch_size, seq_len, 1)
 
                 logits = self.net(Xg=batch.x, Xs=batch.seq, Xa=batch.act_origin,
                     edge_index=batch.edge_index, Act_pos=batch.act_pos, batch_g=batch.x_batch)
-                # logits = [(B, S, num_classes), (B, S, num_classes), ...]
                 
                 current_batch_res = []
                 for idx, logit in enumerate(logits):
                     true_idx = TrueSeq[:, :, idx].unsqueeze(2)              # Shape(batch_size, seq_len, 1)
-                    pred = torch.softmax(logit, dim=2)      # Shape(batch_size, seq_len, num_classes)
+                    pred = torch.softmax(logit, dim=2)                      # Shape(batch_size, seq_len, num_classes)
+
+                    if (i==0)&(idx==1):
+                        breakpoint()
 
                     true_proba = 1 - pred.gather(dim=2, index=true_idx) # Shape(batch_size, seq_len, 1)
+                    true_proba = true_proba * pad_mask.float()
+
                     all_idx = torch.arange(pred.size(2), device=pred.device).view(1, 1, -1)
                     remain_mask = all_idx != true_idx
                     remain_probas = pred[remain_mask].view(pred.size(0), pred.size(1), -1)  # Shape(batch_size, seq_len, num_classes - 1)
-
                     max_entropy = torch.log(torch.tensor(pred.size(2)-1, dtype=torch.float)).to(self.device)
                     entropy = - (remain_probas * torch.log(remain_probas + 1e-10)).sum(dim=2, keepdim=True) # Shape(batch_size, seq_len, 1)
                     entropy_score = entropy / max_entropy
+                    entropy_score = entropy_score * pad_mask.float()  # Shape(batch_size, seq_len, 1)
 
                     anomaly_score = (true_proba + entropy_score) / 2.0
-                    anomaly_score = anomaly_score * pad_mask.float()
+                    anomaly_score = anomaly_score
                     current_batch_res.append(anomaly_score)
                 
                 attr_result.append(torch.cat(current_batch_res, dim=2)) # Shape(batch_size, seq_len, num_attr)

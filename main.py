@@ -15,17 +15,20 @@ if __name__ == '__main__':
         dataset_names.remove('cache')
 
     print('number of datasets:' + str(len(dataset_names)))
-    
-    print(dataset_names[-7])
 
+    d = 'BPIC20_International'
+    dataset_names = [name for name in dataset_names if d in name]
+    
     start_time = time.time()
-    dataset = Dataset(dataset_names[-7])
+    dataset = Dataset(dataset_names[0])
+    
+    print(dataset.attribute_dims)
 
     from model.model import GAIN
 
     gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
-                enc_dropout=0.2, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0004,
-                seed=42)
+                 enc_dropout=0.3, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0004,
+                 seed=42)
 
     gain.fit(dataset)
 

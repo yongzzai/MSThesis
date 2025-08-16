@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     print('number of datasets:' + str(len(dataset_names)))
 
-    d = 'BPIC20_International'
+    d = 'BPIC20_Domes'
     dataset_names = [name for name in dataset_names if d in name]
     
     start_time = time.time()
@@ -26,8 +26,8 @@ if __name__ == '__main__':
 
     from model.model import GAIN
 
-    gain = GAIN(hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
-                 enc_dropout=0.3, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0004,
+    gain = GAIN(embed_dim=32, hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
+                 enc_dropout=0.3, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0005,
                  seed=42)
 
     gain.fit(dataset)

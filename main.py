@@ -1,10 +1,29 @@
-import os
-from utils.dataset import Dataset
 
+from utils.dataset import Dataset
 from utils.eval import cal_best_PRF
 from utils.fs import EVENTLOG_DIR, ROOT_DIR
-import argparse
+from utils.util import get_model_args
+
+import os
 import time
+import argparse
+
+from model.model import GAIN
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--embed_dim', '-emb', type=int, default=16)
+parser.add_argument('--hidden_dim', '-hid',type=int, default=64)
+parser.add_argument('--num_enc_layers', '-el', type=int, default=4)
+parser.add_argument('--num_dec_layers', '-dl', type=int, default=2)
+parser.add_argument('--enc_dropout', '-ed', type=float, default=0.2)
+parser.add_argument('--dec_dropout', '-dd', type=float, default=0.3)
+parser.add_argument('--batch_size', '-b', type=int, default=64)
+parser.add_argument('--epochs', '-epoch', type=int, default=18)
+parser.add_argument('--lr', '-lr', type=float, default=0.0002)
+parser.add_argument('--seed', '-seed', type=int, default=42)
+args = parser.parse_args()
+model_args = get_model_args(args)
 
 
 if __name__ == '__main__':
@@ -14,40 +33,36 @@ if __name__ == '__main__':
     if 'cache' in dataset_names:
         dataset_names.remove('cache')
 
+    t = 'BPIC13_closed'
+    dataset_names = [name for name in dataset_names if t in name]
     print('number of datasets:' + str(len(dataset_names)))
 
-    d = 'BPIC20_Domes'
-    dataset_names = [name for name in dataset_names if d in name]
-    
-    start_time = time.time()
-    dataset = Dataset(dataset_names[0])
-    
-    print(dataset.attribute_dims)
+    for d in dataset_names:
+        start_time = time.time()
+        dataset = Dataset(d)
+        print(f"Dataset: {d}")
 
-    from model.model import GAIN
+        gain = GAIN(**model_args)
 
-    gain = GAIN(embed_dim=32, hidden_dim=64, num_enc_layers=2, num_dec_layers=2,
-                 enc_dropout=0.3, dec_dropout=0.3, batch_size=64, epochs=15, lr=0.0005,
-                 seed=42)
+        gain.fit(dataset)
 
-    gain.fit(dataset)
+        end_time = time.time()
+        duration = (end_time - start_time).__round__(3)
 
-    end_time = time.time()
-    duration = (end_time - start_time).__round__(3)
+        trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = gain.detect(dataset)
 
-    trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = gain.detect(dataset)      
+        event_target = dataset.binary_targets.sum(2).flatten()
+        event_target[event_target > 1] = 1
 
-    event_target = dataset.binary_targets.sum(2).flatten()
-    event_target[event_target > 1] = 1
+        precision_t, recall_t, f1_t, aupr_t = cal_best_PRF(dataset.case_target, trace_level_anomaly_scores)
+        precision_e, recall_e, f1_e, aupr_e = cal_best_PRF(event_target, event_level_anomaly_scores.flatten())
+        precision_a, recall_a, f1_a, aupr_a = cal_best_PRF(dataset.binary_targets.flatten(), attr_level_anomaly_scores.flatten())
 
-    precision_t, recall_t, f1_t, aupr_t = cal_best_PRF(dataset.case_target, trace_level_anomaly_scores)
-    precision_e, recall_e, f1_e, aupr_e = cal_best_PRF(event_target, event_level_anomaly_scores.flatten())
-    precision_a, recall_a, f1_a, aupr_a = cal_best_PRF(dataset.binary_targets.flatten(), attr_level_anomaly_scores.flatten())
-
-    print("Trace-level")
-    print(f"precision: {precision_t}, recall: {recall_t}, f1: {f1_t}, aupr: {aupr_t}")
-    print("Event-level")
-    print(f"precision: {precision_e}, recall: {recall_e}, f1: {f1_e}, aupr: {aupr_e}")
-    print("Attribute-level")
-    print(f"precision: {precision_a}, recall: {recall_a}, f1: {f1_a}, aupr: {aupr_a}")
-    print(f"Time Consumption: {duration}")
+        print("Trace-level")
+        print(f"precision: {precision_t}, recall: {recall_t}, f1: {f1_t}, aupr: {aupr_t}")
+        print("Event-level")
+        print(f"precision: {precision_e}, recall: {recall_e}, f1: {f1_e}, aupr: {aupr_e}")
+        print("Attribute-level")
+        print(f"precision: {precision_a}, recall: {recall_a}, f1: {f1_a}, aupr: {aupr_a}")
+        print(f"Time Consumption: {duration}")
+        print("...")

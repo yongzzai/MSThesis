@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
 
-from .scheduler import WarmupScheduler
 from .layers import Network
 from tqdm import tqdm
 import numpy as np
@@ -36,7 +35,6 @@ class GAIN(nn.Module):
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
     def fit(self, dataset):
 
         self.net = Network(emb_dim=self.embed_dim,
@@ -45,45 +43,32 @@ class GAIN(nn.Module):
                            num_enc_layers=self.num_enc_layers,
                            num_dec_layers=self.num_dec_layers,
                            encoder_dropout=self.enc_rate,
-                           decoder_dropout=self.dec_rate)
+                           decoder_dropout=self.dec_rate).to(self.device)
 
-        self.net = self.net.to(self.device)
-        
         loader = DataLoader(
             dataset=dataset.DataChunks, batch_size=self.batch_size,
-            shuffle=True, follow_batch=['x','seq'], pin_memory=True, num_workers=os.cpu_count()//4)
+            shuffle=True, follow_batch=['x','seq'], pin_memory=True, num_workers=8,
+            prefetch_factor=2, persistent_workers=True)
         
         optimizer = torch.optim.AdamW(
-            self.net.parameters(), lr=self.lr, weight_decay=5e-5)  # weight_decay 감소
+            self.net.parameters(), lr=self.lr, weight_decay=0.)
         
-        total_steps = len(loader) * self.epochs
-        warmup_steps = len(loader) * 2  # warmup 기간을 3에서 2로 단축
-
-        scheduler = WarmupScheduler(
-            optimizer=optimizer,
-            warmup_steps=warmup_steps,
-            total_steps=total_steps,
-            max_lr=self.lr,
-            min_lr=self.lr * 0.1)  # min_lr을 0.0에서 max_lr의 10%로 변경
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.epochs, eta_min=self.lr * 0.1)
         
-        criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.05)
+        criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
 
         for epoch in range(self.epochs):
-
             self.net.train()
             epoch_loss = 0.0
-            
-            iteration = 0
             for batch in tqdm(loader, desc="Epoch {}".format(epoch+1)):
 
-                optimizer.zero_grad()
                 batch = batch.to(self.device)
 
                 Xg, Xs, Xa = batch.x, batch.seq, batch.act_origin
                 edge_index = batch.edge_index
-                Act_pos = batch.act_pos
-                batch_g = batch.x_batch
-                
+                Act_pos, batch_g = batch.act_pos, batch.x_batch
+
                 logits = self.net(Xg=Xg, Xs=Xs, Xa=Xa,
                     edge_index=edge_index, Act_pos=Act_pos, batch_g=batch_g)
 
@@ -96,28 +81,19 @@ class GAIN(nn.Module):
                     mask = ground_truth > 0     # mask pad token  Shape(batch_size, seq_len)
                     mask[:, 0] = False  # mask start token
 
-                    if idx==0:
-                        loss = criterion(pred, ground_truth) * mask.float()   # Shape(batch_size, seq_len)
-                        loss = loss.sum(dim=1) / mask.float().sum(dim=1)
+                    loss = criterion(pred, ground_truth) * mask.float()
+                    loss = loss.sum(dim=1) / mask.float().sum(dim=1)        # Shape(batch_size)
+                    batch_loss += loss.mean()
 
-                        batch_loss += 0.5 * loss.mean()  # Activity 가중치를 0.6에서 0.5로 조정
-                    
-                    else:
-                        loss = criterion(pred, ground_truth) * mask.float()   # Shape(batch_size, seq_len)
-                        loss = loss.sum(dim=1) / mask.float().sum(dim=1)
-
-                        batch_loss += 0.5 * loss.mean() / (len(logits) - 1)  # 다른 속성들에 균등 분배
-
+                optimizer.zero_grad()
                 batch_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=1.0)  # 5.0에서 1.0으로 감소
+                torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=5.0)
                 optimizer.step()
 
-                current_lr = scheduler.step()
-                epoch_loss += batch_loss.item() / len(dataset.attribute_dims)
-
-                iteration = iteration + 1
-        
-            print("Epoch {} - Loss = {:.4f}, LR = {:.6f}".format(epoch+1, epoch_loss/len(loader), current_lr))
+                epoch_loss += batch_loss.item()
+            
+            scheduler.step()
+            print("Epoch {} - Loss = {:.4f}, LR = {:.6f}".format(epoch+1, epoch_loss/len(loader), scheduler.get_last_lr()[0]))
 
 
     def detect(self, dataset):
@@ -145,10 +121,8 @@ class GAIN(nn.Module):
                     true_idx = TrueSeq[:, :, idx].unsqueeze(2)              # Shape(batch_size, seq_len, 1)
                     pred = torch.softmax(logit, dim=2)                      # Shape(batch_size, seq_len, num_classes)
 
-                    # GAMA/GRASPED 방식: 실제 값보다 높은 확률을 가진 다른 클래스들의 확률 합
                     true_proba = pred.gather(dim=2, index=true_idx)         # Shape(batch_size, seq_len, 1)
                     
-                    # 실제 값보다 높은 확률을 가진 클래스들만 선택
                     pred_temp = pred.clone()
                     pred_temp[pred_temp <= true_proba] = 0                  # true_proba보다 작거나 같으면 0으로 설정
                     anomaly_score = pred_temp.sum(dim=2, keepdim=True)      # 나머지 확률들의 합

@@ -10,7 +10,7 @@ from torch_geometric.loader import DataLoader
 from .layers import Network
 from tqdm import tqdm
 import numpy as np
-import os
+
 
 class GAIN(nn.Module):
 
@@ -44,19 +44,19 @@ class GAIN(nn.Module):
                            num_dec_layers=self.num_dec_layers,
                            encoder_dropout=self.enc_rate,
                            decoder_dropout=self.dec_rate).to(self.device)
-
+        
         loader = DataLoader(
             dataset=dataset.DataChunks, batch_size=self.batch_size,
             shuffle=True, follow_batch=['x','seq'], pin_memory=True, num_workers=8,
             prefetch_factor=2, persistent_workers=True)
-        
+
         optimizer = torch.optim.AdamW(
             self.net.parameters(), lr=self.lr, weight_decay=0.)
-        
+
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=self.epochs, eta_min=self.lr * 0.1)
-        
-        criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+            optimizer, T_max=self.epochs, eta_min=self.lr*0.1)
+
+        criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)        
 
         for epoch in range(self.epochs):
             self.net.train()
@@ -84,16 +84,16 @@ class GAIN(nn.Module):
                     loss = criterion(pred, ground_truth) * mask.float()
                     loss = loss.sum(dim=1) / mask.float().sum(dim=1)        # Shape(batch_size)
                     batch_loss += loss.mean()
-
+                    
                 optimizer.zero_grad()
                 batch_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=5.0)
                 optimizer.step()
 
                 epoch_loss += batch_loss.item()
-            
+
             scheduler.step()
-            print("Epoch {} - Loss = {:.4f}, LR = {:.6f}".format(epoch+1, epoch_loss/len(loader), scheduler.get_last_lr()[0]))
+            print("Epoch {} - Loss = {:.4f}".format(epoch+1, epoch_loss/len(loader)))
 
 
     def detect(self, dataset):

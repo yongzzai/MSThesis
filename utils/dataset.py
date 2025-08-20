@@ -166,11 +166,12 @@ class Dataset(object):
 
                 x = torch.tensor(x, dtype=torch.long)
                 edge_index = edge_index.T   # shape(2, num_edges)
-                # edge_index = to_undirected(edge_index)
+                edge_index = to_undirected(edge_index)
 
                 # Shape (Attr_num, Seq_len) --> (1, Seq_len, Attr_num)
-                event_attrs = event_attrs.permute(1,0).unsqueeze(0)
-
+                if event_attrs.shape[0] > 0:
+                    event_attrs = event_attrs.permute(1,0).unsqueeze(0)
+                
                 data = Data(x=x, edge_index=edge_index, seq=event_attrs, 
                             act_pos=position, act_origin=act_origin)
                 self.DataChunks.append(data)

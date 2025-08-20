@@ -6,7 +6,9 @@ from utils.util import get_model_args
 
 import os
 import time
+import warnings
 import argparse
+import pandas as pd
 
 from model.model import GAIN
 
@@ -27,42 +29,66 @@ model_args = get_model_args(args)
 
 
 if __name__ == '__main__':
+    warnings.filterwarnings("ignore")
 
     dataset_names = os.listdir(EVENTLOG_DIR)
     dataset_names.sort()
     if 'cache' in dataset_names:
         dataset_names.remove('cache')
 
-    t = 'BPIC13_closed'
-    dataset_names = [name for name in dataset_names if t in name]
+    if model_args['batch_size'] < 32:
+        not_include = ['BPIC12', 'BPIC20_Dome', 'BPIC17','Billing','Road_Traffic']
+    else:
+        not_include = ['BPIC17-','Billing','Road_Traffic']
+    
+    dataset_names = [name for name in dataset_names if
+                     not any(t in name for t in not_include) 
+                     and 'real-life' not in name]
+
+    #n = 'small'
+    #dataset_names = [name for name in dataset_names if n in name]
+    
     print('number of datasets:' + str(len(dataset_names)))
 
+    pid = os.getpid()
+    date = time.strftime("%m-%d", time.localtime())
+
+    results = pd.DataFrame(columns=['dataset','param_b', 'precision_t', 'recall_t', 'f1_t', 'aupr_t',
+                                     'precision_e', 'recall_e', 'f1_e', 'aupr_e',
+                                     'precision_a', 'recall_a', 'f1_a', 'aupr_a',
+                                     'duration'])
+    
+    os.makedirs(os.path.join(ROOT_DIR, 'results'), exist_ok=True)
+    results_path = os.path.join(ROOT_DIR, 'results', f'result_{date}_{pid}.csv')
+
     for d in dataset_names:
-        start_time = time.time()
-        dataset = Dataset(d)
-        print(f"Dataset: {d}")
+        try:
+            start_time = time.time()
+            dataset = Dataset(d)
+            print(f"Dataset: {d}")
 
-        gain = GAIN(**model_args)
+            gain = GAIN(**model_args)
 
-        gain.fit(dataset)
+            gain.fit(dataset)
 
-        end_time = time.time()
-        duration = (end_time - start_time).__round__(3)
+            end_time = time.time()
+            duration = (end_time - start_time).__round__(3)
 
-        trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = gain.detect(dataset)
+            trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = gain.detect(dataset)
 
-        event_target = dataset.binary_targets.sum(2).flatten()
-        event_target[event_target > 1] = 1
+            event_target = dataset.binary_targets.sum(2).flatten()
+            event_target[event_target > 1] = 1
 
-        precision_t, recall_t, f1_t, aupr_t = cal_best_PRF(dataset.case_target, trace_level_anomaly_scores)
-        precision_e, recall_e, f1_e, aupr_e = cal_best_PRF(event_target, event_level_anomaly_scores.flatten())
-        precision_a, recall_a, f1_a, aupr_a = cal_best_PRF(dataset.binary_targets.flatten(), attr_level_anomaly_scores.flatten())
+            precision_t, recall_t, f1_t, aupr_t = cal_best_PRF(dataset.case_target, trace_level_anomaly_scores)
+            precision_e, recall_e, f1_e, aupr_e = cal_best_PRF(event_target, event_level_anomaly_scores.flatten())
+            precision_a, recall_a, f1_a, aupr_a = cal_best_PRF(dataset.binary_targets.flatten(), attr_level_anomaly_scores.flatten())
 
-        print("Trace-level")
-        print(f"precision: {precision_t}, recall: {recall_t}, f1: {f1_t}, aupr: {aupr_t}")
-        print("Event-level")
-        print(f"precision: {precision_e}, recall: {recall_e}, f1: {f1_e}, aupr: {aupr_e}")
-        print("Attribute-level")
-        print(f"precision: {precision_a}, recall: {recall_a}, f1: {f1_a}, aupr: {aupr_a}")
-        print(f"Time Consumption: {duration}")
-        print("...")
+            new_row = {'dataset': d, 'param_b': model_args['batch_size'], 'precision_t': precision_t, 'recall_t': recall_t, 'f1_t': f1_t, 'aupr_t': aupr_t,
+                       'precision_e': precision_e, 'recall_e': recall_e, 'f1_e': f1_e, 'aupr_e': aupr_e,
+                       'precision_a': precision_a, 'recall_a': recall_a, 'f1_a': f1_a, 'aupr_a': aupr_a,
+                       'duration': duration}
+            results = pd.concat([results, pd.DataFrame([new_row])], ignore_index=True)
+            results.to_csv(results_path, index=False)
+
+        except Exception as e:
+            print(f"Error occurred while processing dataset {d}: {e}")

@@ -40,7 +40,7 @@ def fit_and_eva(dataset_name, ad, fit_kwargs=None , ad_kwargs=None):
     # AD
     ad = ad(**ad_kwargs)
     print(ad.name)
-    resPath=os.path.join(ROOT_DIR, f'result_{ad.name}.csv')
+    resPath=os.path.join(ROOT_DIR, f'baseline_result/result_{ad.name}.csv')
     try:
         # Train and save
         ad.fit(dataset, **fit_kwargs)
@@ -84,7 +84,7 @@ def fit_and_eva(dataset_name, ad, fit_kwargs=None , ad_kwargs=None):
                                  }])
         if os.path.exists(resPath):
             data = pd.read_csv(resPath)
-            data = data.append(datanew,ignore_index=True)
+            data = pd.concat([data, datanew], ignore_index=True)
         else:
             data = datanew
         data.to_csv(resPath ,index=False)
@@ -93,7 +93,7 @@ def fit_and_eva(dataset_name, ad, fit_kwargs=None , ad_kwargs=None):
         datanew = pd.DataFrame([{'index': dataset_name}])
         if os.path.exists(resPath):
             data = pd.read_csv(resPath)
-            data = data.append(datanew, ignore_index=True)
+            data = pd.concat([data, datanew], ignore_index=True)
         else:
             data = datanew
         data.to_csv(resPath, index=False)
@@ -103,12 +103,13 @@ def fit_and_eva(dataset_name, ad, fit_kwargs=None , ad_kwargs=None):
 
 
 if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn')
 
     dataset_names = os.listdir(EVENTLOG_DIR)
     dataset_names.sort()
     if 'cache' in dataset_names:
         dataset_names.remove('cache')
+    
+    dataset_names = [n for n in dataset_names if 'real-life' not in n]
 
     dataset_names_syn = [name for name in dataset_names if (
                                                         'gigantic' in name
@@ -125,18 +126,18 @@ if __name__ == '__main__':
     dataset_names_real.sort()
 
     ads = [
-        dict(ad=LikelihoodPlusAnomalyDetector),  ## Multi-perspective, attr-level    --- Multi-perspective anomaly detection in business process execution events (extended to support the use of external threshold)
+        # dict(ad=LikelihoodPlusAnomalyDetector),  ## Multi-perspective, attr-level    --- Multi-perspective anomaly detection in business process execution events (extended to support the use of external threshold)
         dict(ad=NaiveAnomalyDetector),  # Control flow, trace-level    ---Algorithms for anomaly detection of traces in logs of process aware information systems
         dict(ad=SamplingAnomalyDetector),  # Control flow, trace-level    ---Algorithms for anomaly detection of traces in logs of process aware information systems
+        #dict(ad=Leverage), # Control flow, trace-level       ---Keeping our rivers clean: Information-theoretic online anomaly detection for streaming business process events
         #dict(ad=DAE, fit_kwargs=dict(epochs=100, batch_size=64)),  ## Multi-perspective, attr-level    ---Analyzing business process anomalies using autoencoders
         #dict(ad=BINetv3, fit_kwargs=dict(epochs=20, batch_size=64)), ## Multi-perspective, attr-level  ---BINet: Multi-perspective business process anomaly classification
         #dict(ad=BINetv2, fit_kwargs=dict(epochs=20, batch_size=64)), ## Multi-perspective, attr-level  ---BINet: Multivariate business process anomaly detection using deep learning
-        dict(ad=GAMA,ad_kwargs=dict(n_epochs=20)), ## Multi-perspective, attr-level    ---GAMA: A Multi-graph-based Anomaly Detection Framework for Business Processes via Graph Neural Networks
+        #dict(ad=GAMA,ad_kwargs=dict(n_epochs=20)), ## Multi-perspective, attr-level    ---GAMA: A Multi-graph-based Anomaly Detection Framework for Business Processes via Graph Neural Networks
         dict(ad=VAE), ## Multi-perspective, attr-level 自己修改后使其能够检测attr-level      ---Autoencoders for improving quality of process event logs
         dict(ad=LAE), ## Multi-perspective, attr-level  自己修改后使其能够检测attr-level      ---Autoencoders for improving quality of process event logs
         dict(ad=GAE), ## Multi-perspective, trace-level       ---Graph Autoencoders for Business Process Anomaly Detection
         dict(ad=GRASPED), ## Multi-perspective, attr-level    ---GRASPED: A GRU-AE Network Based Multi-Perspective Business Process Anomaly Detection Model
-        dict(ad=Leverage), # Control flow, trace-level       ---Keeping our rivers clean: Information-theoretic online anomaly detection for streaming business process events
         dict(ad=W2VLOF), # Control flow, trace-level     ---Anomaly Detection on Event Logs with a Scarcity of Labels
         dict(ad=VAEOCSVM) # Control flow, trace-level   ---Variational Autoencoder for Anomaly Detection in Event Data in Online Process Mining
     ]

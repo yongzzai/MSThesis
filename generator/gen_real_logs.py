@@ -22,7 +22,7 @@ def get_log_files(path=None):
     return [os.path.join(path,f) for f in os.listdir(path)]
 
 
-logs = [m for m in get_log_files()]
+logs = [m for m in get_log_files() if 'BPIC12' in m]
 combinations = list(itertools.product(logs, ps))
 for event_log_path, p in tqdm(combinations, desc='Add anomalies'):
     print(event_log_path)

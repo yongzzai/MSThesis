@@ -7,6 +7,7 @@ import multiprocessing
 
 import pandas as pd
 
+from baseline.COMB.comb import COMB
 from baseline.GAE.gae import GAE
 from baseline.GAMA.gama import GAMA
 from baseline.GRASPED.grasped import GRASPED

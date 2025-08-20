@@ -70,18 +70,6 @@ if __name__ == '__main__':
             print("trace-level")
             print("Precision:{}, Recall:{}, F-score:{}, AP:{}".format(trace_p, trace_r, trace_f1, trace_aupr))
 
-            # df = pd.DataFrame({
-            #     'trace': trace_level_abnormal_scores.flatten(),
-            # })
-            # hist = df.hist(bins=100)
-            # plt.show()
-            #
-            #
-            # cats = pd.cut(trace_level_abnormal_scores.flatten(),[i/100 for i in range(-1,101)])
-            # d=pd.value_counts(cats)
-            # d = d.sort_index()
-            # print(d.tolist())
-
             ##event level
             eventTemp = dataset.binary_targets.sum(2).flatten()
             eventTemp[eventTemp > 1] = 1
@@ -92,21 +80,9 @@ if __name__ == '__main__':
             ##attr level
             attr_p, attr_r, attr_f1, attr_aupr = cal_best_PRF(dataset.binary_targets.flatten(),
                                                               attr_level_abnormal_scores.flatten())
-
-            # df = pd.DataFrame({
-            #     'attr': attr_level_abnormal_scores.flatten(),
-            # })
-            # hist = df.hist(bins=100)
-            # plt.show()
-
-            # cats = pd.cut(attr_level_abnormal_scores.flatten(),[i/100 for i in range(-1,101)])
-            # d = pd.value_counts(cats)
-            # d=d.sort_index()
-            # print(d.tolist())
-
+            
             print("attr-level")
             print("Precision:{}, Recall:{}, F-score:{}, AP:{}".format(attr_p, attr_r, attr_f1, attr_aupr))
-
 
             datanew = pd.DataFrame([{'index': dataset_name, 'trace_p': trace_p, "trace_r": trace_r, 'trace_f1': trace_f1,
                                      'trace_aupr': trace_aupr,

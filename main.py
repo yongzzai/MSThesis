@@ -35,18 +35,13 @@ if __name__ == '__main__':
     dataset_names.sort()
     if 'cache' in dataset_names:
         dataset_names.remove('cache')
-
-    if model_args['batch_size'] < 32:
-        not_include = ['BPIC12', 'BPIC20_Dome', 'BPIC17','Billing','Road_Traffic']
-    else:
-        not_include = ['BPIC17-','Billing','Road_Traffic']
     
     dataset_names = [name for name in dataset_names if
-                     not any(t in name for t in not_include) 
-                     and 'real-life' not in name]
+                     'real-life' not in name
+                     and 'synthetic' not in name]
 
-    #n = 'small'
-    #dataset_names = [name for name in dataset_names if n in name]
+    n = 'BPIC17'
+    dataset_names = [name for name in dataset_names if n in name]
     
     print('number of datasets:' + str(len(dataset_names)))
 

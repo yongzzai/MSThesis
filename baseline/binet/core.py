@@ -198,7 +198,7 @@ def binet_model_fn(dataset,
     from keras.layers import BatchNormalization
     from keras.layers import Dense
     from keras.layers import Reshape
-    from keras.optimizers import adam_v2
+    from keras.optimizers import Adam
 
 
     # Check for compatibility
@@ -348,12 +348,12 @@ def binet_model_fn(dataset,
         return loss_map[attr_name](y_true, y_pred)
 
     # Register it as custom object, so it may be loaded afterwards in conjunction with the model
-    from keras.utils.generic_utils import get_custom_objects
+    from keras.utils import get_custom_objects
     get_custom_objects().update({"custom_loss": custom_loss})
 
     # Compile model
     model.compile(
-        optimizer=adam_v2.Adam(),
+        optimizer=Adam(),
         loss='custom_loss'
     )
 

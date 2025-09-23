@@ -129,11 +129,14 @@ class GAIN(nn.Module):
                     
                     anomaly_score = anomaly_score * pad_mask.float()        # 패딩 마스크 적용
                     current_batch_res.append(anomaly_score)
-                
                 attr_result.append(torch.cat(current_batch_res, dim=2)) # Shape(batch_size, seq_len, num_attr)
         
         attr_level_anomaly_score = np.array(torch.cat(attr_result, dim=0).detach().cpu())
         event_level_anomaly_score = attr_level_anomaly_score.max((2))  # Shape(num_cases, seq_len)
         trace_level_anomaly_score = attr_level_anomaly_score.max((1,2)) # Shape(num_cases,)
-
         return trace_level_anomaly_score, event_level_anomaly_score, attr_level_anomaly_score
+
+#TODO: 뭔가 하나만 더 추가하고 싶은데..
+
+# 실제 인덱스에 해당하는 logits에 sigmoid적용 --> 0~1 : Anomaly이면 확률이 작음. 정상이면 확률이 높음.
+# 실제 인덱스 외에 나머지 인덱스 확률의 합 --> 0~1 : Anomaly이면 합이 큼.

@@ -58,7 +58,7 @@ class DAE(NNAnomalyDetector):
         # Import keras locally
         from keras.layers import Input, Dense, Dropout, GaussianNoise
         from keras.models import Model
-        from keras.optimizers import adam_v2
+        from keras.optimizers import Adam
 
         hidden_layers = kwargs.pop('hidden_layers')
         hidden_size_factor = kwargs.pop('hidden_size_factor')
@@ -94,7 +94,7 @@ class DAE(NNAnomalyDetector):
 
         # Compile model
         model.compile(
-            optimizer=adam_v2.Adam(lr=0.0001, beta_2=0.99),
+            optimizer=Adam(learning_rate=0.0001, beta_2=0.99),
             loss='mean_squared_error',
         )
 

@@ -29,12 +29,11 @@ process_models = [m for m in get_process_model_files()]
 
 
 for process_model in tqdm(process_models, desc='Generate'):
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.05, num_attr=[1, 2, 3, 4], seed=33)
-    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.1, num_attr=[1, 2, 3, 4], seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.15, num_attr=[1, 2, 3, 4], seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.2, num_attr=[1, 2, 3, 4], seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.25, num_attr=[1, 2, 3, 4], seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.3, num_attr=[1, 2, 3, 4],seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.35, num_attr=[1, 2, 3, 4],seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.4, num_attr=[1, 2, 3, 4],seed=33)
-#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.45, num_attr=[1, 2, 3, 4], seed=33)
+    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.0, num_attr=[1, 2, 3, 4], seed=0)    
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.1, num_attr=[1, 2, 3, 4], seed=0)
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.15, num_attr=[1, 2, 3, 4], seed=0)
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.2, num_attr=[1, 2, 3, 4], seed=0)
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies,anomaly_p=0.25, num_attr=[1, 2, 3, 4], seed=0)
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.3, num_attr=[1, 2, 3, 4],seed=0)
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.35, num_attr=[1, 2, 3, 4],seed=0)
+#    generate_for_process_model(process_model, size=5000, anomalies=anomalies, anomaly_p=0.4, num_attr=[1, 2, 3, 4],seed=0)

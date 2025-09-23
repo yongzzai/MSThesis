@@ -28,7 +28,6 @@ class GraphEncoder(nn.Module):
             gate_nn=nn.Sequential(
                 nn.Linear(hidden_dim*2, hidden_dim),
                 nn.PReLU(),
-#                nn.LeakyReLU(negative_slope=0.06),
                 nn.Dropout(p=dropout),
                 nn.Linear(hidden_dim, 1)))
 
@@ -36,7 +35,6 @@ class GraphEncoder(nn.Module):
 
         x_emb = self.acts_embedding(x).squeeze(1)
 
-        # h = F.leaky_relu(self.conv1(x_emb, edge_index), negative_slope=0.06)
         h = self.act1(self.conv1(x_emb, edge_index))
         h = F.dropout(h, p=self.p, training=self.training)
         out_conv = self.conv2(h, edge_index)    # Shape(num_nodes, 2H)
@@ -114,7 +112,6 @@ class ActivityDecoder(nn.Module):
         self.hg_ffn = nn.Sequential(
             nn.Linear(hidden_dim*2, hidden_dim*2),
             nn.PReLU(),
-#            nn.LeakyReLU(negative_slope=0.06),
             nn.Dropout(p=dropout),
             nn.Linear(hidden_dim*2, hidden_dim))
         

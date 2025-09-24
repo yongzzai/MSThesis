@@ -195,14 +195,13 @@ class AttrDecoder(nn.Module):
                           dropout=dropout if num_dec_layers > 1 else 0.0,
                           batch_first=True)
 
-        # self.gru = nn.GRU(input_size=hidden_dim*2 + emb_dim,      # tfembedding, attn_out, autoregressive_act
-        #                   hidden_size=hidden_dim,
-        #                   num_layers=num_dec_layers,
-        #                   dropout=dropout if num_dec_layers > 1 else 0.0,
-        #                   batch_first=True)
+        self.gru = nn.GRU(input_size=hidden_dim*2 + emb_dim,      # tfembedding, attn_out, autoregressive_act
+                          hidden_size=hidden_dim,
+                          num_layers=num_dec_layers,
+                          dropout=dropout if num_dec_layers > 1 else 0.0,
+                          batch_first=True)
         
-        # self.proj = nn.Linear(hidden_dim*2 + emb_dim, input_dim)    # teacher forcing + gru_out + act_dec autoregressive
-        self.proj = nn.Linear(hidden_dim + emb_dim, input_dim)
+        self.proj = nn.Linear(hidden_dim*2 + emb_dim, input_dim)    # teacher forcing + gru_out + act_dec autoregressive
         
     def forward(self, reg_input, xs, hs, out_s, pad_mask):
         self.gru.flatten_parameters()
@@ -226,11 +225,9 @@ class AttrDecoder(nn.Module):
                                       key_padding_mask=mask)
         attn_out = self.norm(attn_out + query)
         
-        # reg_input = F.dropout(reg_input, p=self.p, training=self.training)  # Shape(batch_size, seq_len-1, input_dim)
+        reg_input = F.dropout(reg_input, p=self.p, training=self.training)  # Shape(batch_size, seq_len-1, input_dim)
         input0 = F.dropout(torch.cat([attn_out, emb], dim=2), p=self.p, training=self.training)
-        # gru_input = torch.cat([input0, reg_input], dim=2)
-
-        gru_input = input0
+        gru_input = torch.cat([input0, reg_input], dim=2)
 
         gru_input_packed = nn.utils.rnn.pack_padded_sequence(
             gru_input, lengths.cpu(), batch_first=True, enforce_sorted=False)
@@ -241,8 +238,8 @@ class AttrDecoder(nn.Module):
             gru_out_packed, batch_first=True, total_length=emb.size(1))
 
         input1 = torch.cat([gru_out, emb], dim=2)
-        # proj_input = torch.cat([input1, reg_input], dim=2)
-        logits = self.proj(input1)
+        proj_input = torch.cat([input1, reg_input], dim=2)
+        logits = self.proj(proj_input)
         return logits
     
 

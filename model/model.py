@@ -12,12 +12,15 @@ from tqdm import tqdm
 import numpy as np
 
 
-class GAIN(nn.Module):
-
+class DHiM(nn.Module):
+    '''
+    DHiM: Dual-Modality Hierarchical Network for 
+    Multi-Perspective Business Process Anomaly Detection
+    '''
     def __init__(self, embed_dim:int, hidden_dim:int, num_enc_layers:int, num_dec_layers:int, 
                  enc_dropout:float, dec_dropout:float,
                  batch_size:int, epochs:int, lr:float, seed:int=None):
-        super(GAIN, self).__init__()
+        super(DHiM, self).__init__()
 
         if seed is not None:
             torch.manual_seed(int(seed))

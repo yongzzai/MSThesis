@@ -10,7 +10,7 @@ import warnings
 import argparse
 import pandas as pd
 
-from model.model import GAIN
+from model.model import DHiM
 
 
 parser = argparse.ArgumentParser()
@@ -39,11 +39,11 @@ if __name__ == '__main__':
     dataset_names = [name for name in dataset_names if
                      'real-life' not in name
                      and 'synthetic' not in name]
-
-    n = 'BPIC17'
-    dataset_names = [name for name in dataset_names if n in name]
     
     print('number of datasets:' + str(len(dataset_names)))
+    
+    if args.batch_size < 16:
+        dataset_names = [n for n in dataset_names if 'BPIC20' not in n]
 
     pid = os.getpid()
     date = time.strftime("%m-%d", time.localtime())
@@ -62,14 +62,14 @@ if __name__ == '__main__':
             dataset = Dataset(d)
             print(f"Dataset: {d}")
 
-            gain = GAIN(**model_args)
+            dhim = DHiM(**model_args)
 
-            gain.fit(dataset)
+            dhim.fit(dataset)
 
             end_time = time.time()
             duration = (end_time - start_time).__round__(3)
 
-            trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = gain.detect(dataset)
+            trace_level_anomaly_scores, event_level_anomaly_scores, attr_level_anomaly_scores = dhim.detect(dataset)
 
             event_target = dataset.binary_targets.sum(2).flatten()
             event_target[event_target > 1] = 1

@@ -5,7 +5,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, AttentionalAggregation
+from torch_geometric.nn import GATConv, AttentionalAggregation, global_mean_pool
 
 
 class GraphEncoder(nn.Module):
@@ -38,7 +38,6 @@ class GraphEncoder(nn.Module):
         h = self.act1(self.conv1(x_emb, edge_index))
         h = F.dropout(h, p=self.p, training=self.training)
         out_conv = self.conv2(h, edge_index)    # Shape(num_nodes, 2H)
-
         hidden = self.aggr(x=out_conv, index=batch_idx)
         return out_conv, hidden     # Shape(num_nodes, 2H), Shape(num_graphs, 2H)
 
@@ -78,7 +77,7 @@ class EventSeqEncoder(nn.Module):
         attn_out, _ = self.pool(out_gru, out_gru, out_gru, key_padding_mask=mask)
         attn_out.masked_fill_(mask.unsqueeze(-1), 0.)
         hidden = attn_out.sum(dim=1)/(~mask).sum(dim=1, keepdim=True)      # Shape(batch_size, hidden*2)
-
+        
         return out_gru, hidden
         # Shape(batch_size, seq_len, hidden*2), Shape(batch_size, hidden*2)
 
@@ -179,7 +178,6 @@ class AttrDecoder(nn.Module):
         self.hs_ffn = nn.Sequential(
             nn.Linear(hidden_dim*2, hidden_dim*2),
             nn.PReLU(),
-#            nn.LeakyReLU(negative_slope=0.06),
             nn.Dropout(p=dropout),
             nn.Linear(hidden_dim*2, hidden_dim))
             
@@ -190,15 +188,22 @@ class AttrDecoder(nn.Module):
         self.norm = nn.LayerNorm(hidden_dim)
 
         self.tfEmbedder = nn.Embedding(input_dim, emb_dim, padding_idx=0)
-        self.gru = nn.GRU(input_size=hidden_dim*2 + emb_dim,      # tfembedding, attn_out, autoregressive_act
+
+        self.gru = nn.GRU(input_size=hidden_dim + emb_dim,      # tfembedding, attn_out, autoregressive_act
                           hidden_size=hidden_dim,
                           num_layers=num_dec_layers,
                           dropout=dropout if num_dec_layers > 1 else 0.0,
                           batch_first=True)
+
+        # self.gru = nn.GRU(input_size=hidden_dim*2 + emb_dim,      # tfembedding, attn_out, autoregressive_act
+        #                   hidden_size=hidden_dim,
+        #                   num_layers=num_dec_layers,
+        #                   dropout=dropout if num_dec_layers > 1 else 0.0,
+        #                   batch_first=True)
         
-        # self.proj = nn.Linear(hidden_dim, input_dim)
-        self.proj = nn.Linear(hidden_dim*2 + emb_dim, input_dim)    # teacher forcing + gru_out + act_dec autoregressive
-            
+        # self.proj = nn.Linear(hidden_dim*2 + emb_dim, input_dim)    # teacher forcing + gru_out + act_dec autoregressive
+        self.proj = nn.Linear(hidden_dim + emb_dim, input_dim)
+        
     def forward(self, reg_input, xs, hs, out_s, pad_mask):
         self.gru.flatten_parameters()
 
@@ -220,13 +225,12 @@ class AttrDecoder(nn.Module):
                                       attn_mask=causal_mask,
                                       key_padding_mask=mask)
         attn_out = self.norm(attn_out + query)
-
-        # if self.training:
-        #     reg_input = reg_input + torch.randn_like(reg_input, device=reg_input.device) * 0.02  # Add noise to reg_input
         
-        reg_input = F.dropout(reg_input, p=self.p, training=self.training)  # Shape(batch_size, seq_len-1, input_dim)
+        # reg_input = F.dropout(reg_input, p=self.p, training=self.training)  # Shape(batch_size, seq_len-1, input_dim)
         input0 = F.dropout(torch.cat([attn_out, emb], dim=2), p=self.p, training=self.training)
-        gru_input = torch.cat([input0, reg_input], dim=2)
+        # gru_input = torch.cat([input0, reg_input], dim=2)
+
+        gru_input = input0
 
         gru_input_packed = nn.utils.rnn.pack_padded_sequence(
             gru_input, lengths.cpu(), batch_first=True, enforce_sorted=False)
@@ -237,8 +241,8 @@ class AttrDecoder(nn.Module):
             gru_out_packed, batch_first=True, total_length=emb.size(1))
 
         input1 = torch.cat([gru_out, emb], dim=2)
-        proj_input = torch.cat([input1, reg_input], dim=2)
-        logits = self.proj(proj_input)
+        # proj_input = torch.cat([input1, reg_input], dim=2)
+        logits = self.proj(input1)
         return logits
     
 
